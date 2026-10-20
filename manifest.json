@@ -1,0 +1,32 @@
+{
+  "name": "Movy-Provider",
+  "version": "1.0.0",
+  "scrapers": [
+    {
+      "id": "movy",
+      "name": "Movy",
+      "description": "High-speed multi-server streaming provider for movies, TV shows, and anime powered by movy.sx",
+      "version": "1.0.0",
+      "author": "Secondary Agent",
+      "supportedTypes": [
+        "movie",
+        "tv",
+        "anime"
+      ],
+      "filename": "providers/movy.js",
+      "enabled": true,
+      "hasSettings": false,
+      "formats": [
+        "m3u8",
+        "mp4"
+      ],
+      "logo": "https://www.movy.sx/favicon.ico",
+      "contentLanguage": [
+        "en",
+        "de",
+        "fr",
+        "es"
+      ]
+    }
+  ]
+}
