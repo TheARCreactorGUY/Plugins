@@ -226,7 +226,7 @@ async function resolveMetadata(tmdbId, mediaType) {
     };
 }
 
-// Server definitions: servers marked as null dubbedLanguage dynamically inherit the media's real-time originalLanguage
+// Complete list of all 18 server providers reverse-engineered from Movy Next.js bundles
 const SERVERS = [
     { name: 'Miami', endpoint: 'miami', dubbedLanguage: null },
     { name: 'Boise', endpoint: 'boise', dubbedLanguage: null },
@@ -237,8 +237,15 @@ const SERVERS = [
     { name: 'Oakland', endpoint: 'oakland', dubbedLanguage: null },
     { name: 'Seattle', endpoint: 'seattle', dubbedLanguage: null },
     { name: 'Dallas', endpoint: 'dallas', dubbedLanguage: null },
+    { name: 'Portland', endpoint: 'portland', dubbedLanguage: null },
+    { name: 'Austin', endpoint: 'austin', dubbedLanguage: null },
+    { name: 'Tampa', endpoint: 'tampa', dubbedLanguage: null },
+    { name: 'Orlando', endpoint: 'orlando', dubbedLanguage: null },
+    { name: 'Munich', endpoint: 'munich', dubbedLanguage: 'de', extraParams: { language: 'german' } },
     { name: 'Berlin', endpoint: 'berlin', dubbedLanguage: 'de' },
-    { name: 'Paris', endpoint: 'paris', dubbedLanguage: 'fr' }
+    { name: 'Paris', endpoint: 'paris', dubbedLanguage: 'fr' },
+    { name: 'Delhi', endpoint: 'delhi', dubbedLanguage: 'hi' },
+    { name: 'Cancun', endpoint: 'cancun', dubbedLanguage: 'es' }
 ];
 
 async function queryServer(server, params, tmdbId, seed, timeoutMs) {
@@ -255,6 +262,13 @@ async function queryServer(server, params, tmdbId, seed, timeoutMs) {
                 const val = params[k];
                 if (val !== undefined && val !== null && val !== '') {
                     sp.set(k, String(val));
+                }
+            }
+        }
+        if (server.extraParams) {
+            for (const k in server.extraParams) {
+                if (server.extraParams.hasOwnProperty(k)) {
+                    sp.set(k, String(server.extraParams[k]));
                 }
             }
         }
@@ -392,7 +406,7 @@ async function queryServer(server, params, tmdbId, seed, timeoutMs) {
             const isHls = srcUrl.toLowerCase().indexOf('.m3u8') >= 0 || srcUrl.toLowerCase().indexOf('hls') >= 0;
 
             streams.push({
-                name: 'Movy | ' + server.name + ' • ' + itemAudio + ' (' + qualityLabel + ')',
+                name: 'Movy | ' + server.name + ' • ' + itemAudio + ' [' + itemTag + '] (' + qualityLabel + ')',
                 title: (params.title || 'Video') + ' [' + itemAudio + '] [' + itemTag + '] - ' + server.name + ' [' + qualityLabel + ']',
                 url: srcUrl,
                 quality: qualityLabel,

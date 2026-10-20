@@ -106,98 +106,102 @@ async function resolveMetadata(tmdbId, mediaType) {
 }
 
 /**
- * Query Vidbolt provider endpoint.
+ * Query Vidbolt provider endpoint across all partner servers (Orion, Callisto, Vega, Zephyr).
  */
 async function queryVidbolt(tmdbId, mediaType, season, episode, meta, timeoutMs) {
     const streams = [];
     const subtitles = [];
-    const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
-    const timer = controller ? setTimeout(() => controller.abort(), timeoutMs || 8000) : null;
+    const headers = {
+        'User-Agent': DEFAULT_HEADERS['User-Agent'],
+        'Referer': 'https://vidbolt.xyz/'
+    };
 
-    try {
-        const headers = {
-            'User-Agent': DEFAULT_HEADERS['User-Agent'],
-            'Referer': 'https://vidbolt.xyz/'
-        };
-
-        let queryPath = 'id=' + encodeURIComponent(tmdbId);
-        if (mediaType === 'movie') {
-            queryPath = 'type=movie&' + queryPath;
-        } else if (mediaType === 'anime') {
-            queryPath = 'type=anime&' + queryPath + '&episode=' + (episode || 1);
-        } else {
-            queryPath = 'type=tv&' + queryPath + '&season=' + (season || 1) + '&episode=' + (episode || 1);
-        }
-
-        const res = await fetch('https://vidbolt.xyz/api/resolve?' + queryPath, {
-            headers,
-            signal: controller ? controller.signal : undefined
-        });
-
-        if (res.ok) {
-            const data = await res.json();
-            const streamObj = data.stream;
-            if (streamObj && Array.isArray(streamObj.sources)) {
-                const serverName = streamObj.server ? (streamObj.server.charAt(0).toUpperCase() + streamObj.server.slice(1)) : 'Orion';
-
-                // Collect subtitles
-                if (Array.isArray(streamObj.subtitles)) {
-                    for (let s of streamObj.subtitles) {
-                        if (s && s.url) {
-                            subtitles.push({
-                                url: s.url,
-                                language: s.lang || s.label || 'English',
-                                name: s.label || s.lang || 'English',
-                                headers
-                            });
-                        }
-                    }
-                }
-
-                // Check audio count across sources
-                const detectedLangs = new Set();
-                streamObj.sources.forEach(src => {
-                    if (src.language) detectedLangs.add(src.language.toLowerCase());
-                });
-
-                for (let src of streamObj.sources) {
-                    if (!src || !src.url) continue;
-
-                    let isMulti = detectedLangs.size > 1;
-                    let langInfo;
-
-                    if (src.language) {
-                        langInfo = getLanguageInfo(src.language);
-                    } else if (isMulti) {
-                        langInfo = { name: 'Multi', tag: 'MULTI', code: 'multi' };
-                    } else {
-                        langInfo = getLanguageInfo(meta.originalLanguage);
-                    }
-
-                    const qualityLabel = src.quality ? String(src.quality) : '1080p';
-                    const isHls = src.kind === 'hls' || src.url.includes('.m3u8');
-
-                    streams.push({
-                        name: 'Bingr | Vidbolt - ' + serverName + ' • ' + langInfo.name + ' (' + qualityLabel + ')',
-                        title: meta.title + ' [' + langInfo.name + '] [' + langInfo.tag + '] - Vidbolt ' + serverName + ' [' + qualityLabel + ']',
-                        url: src.url,
-                        quality: qualityLabel,
-                        type: isHls ? 'm3u8' : 'mp4',
-                        provider: 'bingr',
-                        language: langInfo.code,
-                        headers
-                    });
-                }
-            }
-        }
-    } catch (err) {
-        if (err.name !== 'AbortError') {
-            console.log('[Bingr] Vidbolt query error: ' + err.message);
-        }
-    } finally {
-        if (timer) clearTimeout(timer);
+    let queryPath = 'id=' + encodeURIComponent(tmdbId);
+    if (mediaType === 'movie') {
+        queryPath = 'type=movie&' + queryPath;
+    } else if (mediaType === 'anime') {
+        queryPath = 'type=anime&' + queryPath + '&episode=' + (episode || 1);
+    } else {
+        queryPath = 'type=tv&' + queryPath + '&season=' + (season || 1) + '&episode=' + (episode || 1);
     }
 
+    const vidboltServers = ['orion', 'callisto', 'vega', 'zephyr'];
+    const seenUrls = new Set();
+
+    const serverPromises = vidboltServers.map(async (srv) => {
+        const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+        const timer = controller ? setTimeout(() => controller.abort(), timeoutMs || 8000) : null;
+        try {
+            const res = await fetch('https://vidbolt.xyz/api/resolve?' + queryPath + '&only=' + srv, {
+                headers,
+                signal: controller ? controller.signal : undefined
+            });
+
+            if (res.ok) {
+                const data = await res.json();
+                const streamObj = data.stream;
+                if (streamObj && Array.isArray(streamObj.sources)) {
+                    const serverName = streamObj.server ? (streamObj.server.charAt(0).toUpperCase() + streamObj.server.slice(1)) : (srv.charAt(0).toUpperCase() + srv.slice(1));
+
+                    // Collect subtitles
+                    if (Array.isArray(streamObj.subtitles)) {
+                        for (let s of streamObj.subtitles) {
+                            if (s && s.url) {
+                                subtitles.push({
+                                    url: s.url,
+                                    language: s.lang || s.label || 'English',
+                                    name: s.label || s.lang || 'English',
+                                    headers
+                                });
+                            }
+                        }
+                    }
+
+                    // Check audio count across sources
+                    const detectedLangs = new Set();
+                    streamObj.sources.forEach(src => {
+                        if (src.language) detectedLangs.add(src.language.toLowerCase());
+                    });
+
+                    for (let src of streamObj.sources) {
+                        if (!src || !src.url || seenUrls.has(src.url)) continue;
+                        seenUrls.add(src.url);
+
+                        let isMulti = detectedLangs.size > 1;
+                        let langInfo;
+
+                        if (src.language) {
+                            langInfo = getLanguageInfo(src.language);
+                        } else if (isMulti) {
+                            langInfo = { name: 'Multi', tag: 'MULTI', code: 'multi' };
+                        } else {
+                            langInfo = getLanguageInfo(meta.originalLanguage);
+                        }
+
+                        const qualityLabel = src.quality ? String(src.quality) : '1080p';
+                        const isHls = src.kind === 'hls' || src.url.includes('.m3u8');
+
+                        streams.push({
+                            name: 'Bingr | Vidbolt - ' + serverName + ' • ' + langInfo.name + ' [' + langInfo.tag + '] (' + qualityLabel + ')',
+                            title: meta.title + ' [' + langInfo.name + '] [' + langInfo.tag + '] - Vidbolt ' + serverName + ' [' + qualityLabel + ']',
+                            url: src.url,
+                            quality: qualityLabel,
+                            type: isHls ? 'm3u8' : 'mp4',
+                            provider: 'bingr',
+                            language: langInfo.code,
+                            headers
+                        });
+                    }
+                }
+            }
+        } catch (err) {
+            // ignore server error
+        } finally {
+            if (timer) clearTimeout(timer);
+        }
+    });
+
+    await Promise.allSettled(serverPromises);
     return { streams, subtitles };
 }
 
@@ -251,9 +255,12 @@ async function queryPunkflix(tmdbId, mediaType, season, episode, meta, timeoutMs
             // Real-time dynamic audio detection
             let isMulti = false;
             let audioLang = null;
+            let multiTokens = [];
 
             if (Array.isArray(data.audio) && data.audio.length > 1) {
                 isMulti = true;
+                const distinctLangs = Array.from(new Set(data.audio.map(a => a.language).filter(l => l && l !== 'und')));
+                multiTokens = distinctLangs.map(l => getLanguageInfo(l).tag);
             } else if (Array.isArray(data.audio) && data.audio.length === 1) {
                 const aud = data.audio[0];
                 if (aud.language && aud.language !== 'und') {
@@ -262,12 +269,16 @@ async function queryPunkflix(tmdbId, mediaType, season, episode, meta, timeoutMs
             }
 
             let langInfo;
+            let tagString;
             if (isMulti) {
                 langInfo = { name: 'Multi', tag: 'MULTI', code: 'multi' };
+                tagString = multiTokens.length > 0 ? ('[MULTI] [' + multiTokens.join(' · ') + ']') : '[MULTI]';
             } else if (audioLang) {
                 langInfo = getLanguageInfo(audioLang);
+                tagString = '[' + langInfo.tag + ']';
             } else {
                 langInfo = getLanguageInfo(meta.originalLanguage);
+                tagString = '[' + langInfo.tag + ']';
             }
 
             const qualityLabel = (data.quality && data.quality.resolution) ? data.quality.resolution : '1080p';
@@ -275,8 +286,8 @@ async function queryPunkflix(tmdbId, mediaType, season, episode, meta, timeoutMs
             // HLS stream
             if (data.stream && data.stream.hls) {
                 streams.push({
-                    name: 'Bingr | Cinezo - Jennifer • ' + langInfo.name + ' (' + qualityLabel + ')',
-                    title: meta.title + ' [' + langInfo.name + '] [' + langInfo.tag + '] - Cinezo Jennifer [' + qualityLabel + ']',
+                    name: 'Bingr | Cinezo - Jennifer • ' + langInfo.name + ' ' + tagString + ' (' + qualityLabel + ')',
+                    title: meta.title + ' ' + tagString + ' - Cinezo Jennifer [' + qualityLabel + ']',
                     url: data.stream.hls,
                     quality: qualityLabel,
                     type: 'm3u8',
@@ -290,8 +301,8 @@ async function queryPunkflix(tmdbId, mediaType, season, episode, meta, timeoutMs
             if (data.stream && (data.stream.remux || data.stream.original)) {
                 const fileUrl = data.stream.remux || data.stream.original;
                 streams.push({
-                    name: 'Bingr | Cinezo - Direct • ' + langInfo.name + ' (' + qualityLabel + ')',
-                    title: meta.title + ' [' + langInfo.name + '] [' + langInfo.tag + '] - Cinezo Direct [' + qualityLabel + ']',
+                    name: 'Bingr | Cinezo - Direct • ' + langInfo.name + ' ' + tagString + ' (' + qualityLabel + ')',
+                    title: meta.title + ' ' + tagString + ' - Cinezo Direct [' + qualityLabel + ']',
                     url: fileUrl,
                     quality: qualityLabel,
                     type: 'mp4',
@@ -361,7 +372,7 @@ async function queryFlikhub(tmdbId, mediaType, season, episode, meta, timeoutMs)
 
             if (data.source && data.source.url) {
                 streams.push({
-                    name: 'Bingr | Flikhub - Berlin • ' + langInfo.name + ' (1080p)',
+                    name: 'Bingr | Flikhub - Berlin • ' + langInfo.name + ' [' + langInfo.tag + '] (1080p)',
                     title: meta.title + ' [' + langInfo.name + '] [' + langInfo.tag + '] - Flikhub Berlin [1080p]',
                     url: data.source.url,
                     quality: '1080p',
@@ -419,7 +430,7 @@ async function queryFilmu(tmdbId, mediaType, season, episode, meta, timeoutMs) {
                     if (s && s.url) {
                         const qualityLabel = s.quality ? String(s.quality) : '1080p';
                         streams.push({
-                            name: 'Bingr | Filmu - Singularity • ' + langInfo.name + ' (' + qualityLabel + ')',
+                            name: 'Bingr | Filmu - Singularity • ' + langInfo.name + ' [' + langInfo.tag + '] (' + qualityLabel + ')',
                             title: meta.title + ' [' + langInfo.name + '] [' + langInfo.tag + '] - Filmu Singularity [' + qualityLabel + ']',
                             url: s.url,
                             quality: qualityLabel,
@@ -437,7 +448,7 @@ async function queryFilmu(tmdbId, mediaType, season, episode, meta, timeoutMs) {
                 const qualityLabel = data.quality ? String(data.quality) : '1080p';
 
                 streams.push({
-                    name: 'Bingr | Filmu - Singularity • ' + streamLang.name + ' (' + qualityLabel + ')',
+                    name: 'Bingr | Filmu - Singularity • ' + streamLang.name + ' [' + streamLang.tag + '] (' + qualityLabel + ')',
                     title: meta.title + ' [' + streamLang.name + '] [' + streamLang.tag + '] - Filmu Singularity [' + qualityLabel + ']',
                     url: streamUrl,
                     quality: qualityLabel,

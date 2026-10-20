@@ -1,12 +1,12 @@
 {
   "name": "Community-Providers",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "scrapers": [
     {
       "id": "movy",
       "name": "Movy",
-      "description": "High-speed multi-server streaming provider for movies, TV shows, and anime powered by movy.sx",
-      "version": "1.0.0",
+      "description": "High-speed 18-server streaming provider for movies, TV shows, and anime powered by movy.sx (Miami, Boise, Atlanta, Phoenix, Vegas, Reno, Oakland, Seattle, Dallas, Portland, Austin, Tampa, Orlando, Munich, Berlin, Paris, Delhi, Cancun)",
+      "version": "1.2.0",
       "author": "Secondary Agent",
       "supportedTypes": [
         "movie",
@@ -26,6 +26,7 @@
         "de",
         "fr",
         "es",
+        "hi",
         "ja"
       ]
     },
@@ -33,7 +34,7 @@
       "id": "bingr",
       "name": "Bingr",
       "description": "Multi-source streaming provider for movies, TV shows, and anime aggregated from Bingr endpoints with dynamic multi-audio and subtitle support",
-      "version": "1.0.0",
+      "version": "1.2.0",
       "author": "Secondary Agent",
       "supportedTypes": [
         "movie",
