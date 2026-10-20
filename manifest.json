@@ -1,12 +1,12 @@
 {
   "name": "Community-Providers",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "scrapers": [
     {
       "id": "movy",
       "name": "Movy",
       "description": "High-speed 18-server streaming provider for movies, TV shows, and anime powered by movy.sx (Miami, Boise, Atlanta, Phoenix, Vegas, Reno, Oakland, Seattle, Dallas, Portland, Austin, Tampa, Orlando, Munich, Berlin, Paris, Delhi, Cancun)",
-      "version": "1.2.0",
+      "version": "1.3.0",
       "author": "Secondary Agent",
       "supportedTypes": [
         "movie",
@@ -34,7 +34,7 @@
       "id": "bingr",
       "name": "Bingr",
       "description": "Multi-source streaming provider for movies, TV shows, and anime aggregated from Bingr endpoints with dynamic multi-audio and subtitle support",
-      "version": "1.2.0",
+      "version": "1.3.0",
       "author": "Secondary Agent",
       "supportedTypes": [
         "movie",
@@ -53,6 +53,33 @@
         "en",
         "ja",
         "hi",
+        "multi"
+      ]
+    },
+    {
+      "id": "4khdhub",
+      "name": "4KHDHub",
+      "description": "Premium 4K Ultra and HD provider for Movies, TV Shows, Webseries, and Anime aggregated from 4khdhub.one with multi-audio support",
+      "version": "1.0.0",
+      "author": "Secondary Agent",
+      "supportedTypes": [
+        "movie",
+        "tv",
+        "anime"
+      ],
+      "filename": "providers/4khdhub.js",
+      "enabled": true,
+      "hasSettings": false,
+      "formats": [
+        "m3u8",
+        "mp4"
+      ],
+      "logo": "https://4khdhub.one/favicon.ico",
+      "contentLanguage": [
+        "en",
+        "hi",
+        "ta",
+        "te",
         "multi"
       ]
     }

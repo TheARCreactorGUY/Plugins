@@ -405,9 +405,17 @@ async function queryServer(server, params, tmdbId, seed, timeoutMs) {
             const qualityLabel = src.quality ? String(src.quality) : 'Auto';
             const isHls = srcUrl.toLowerCase().indexOf('.m3u8') >= 0 || srcUrl.toLowerCase().indexOf('hls') >= 0;
 
+            const isMovie = params.mediaType === 'movie';
+            const epTag = !isMovie ? ('S' + String(params.season || 1).padStart(2, '0') + 'E' + String(params.episode || 1).padStart(2, '0')) : '';
+            const titlePrefix = !isMovie ?
+                ((params.title || 'Video') + ' ' + epTag) :
+                ((params.title || 'Video') + (params.year ? ' (' + params.year + ')' : ''));
+
+            const displayTag = itemAudio === 'Multi' ? '[MULTI]' : ('[' + itemTag + ']');
+
             streams.push({
-                name: 'Movy | ' + server.name + ' • ' + itemAudio + ' [' + itemTag + '] (' + qualityLabel + ')',
-                title: (params.title || 'Video') + ' [' + itemAudio + '] [' + itemTag + '] - ' + server.name + ' [' + qualityLabel + ']',
+                name: 'Movy | ' + server.name + ' • ' + itemAudio + ' ' + displayTag + ' (' + qualityLabel + ')',
+                title: titlePrefix + ' ' + displayTag + ' - ' + server.name + ' [' + qualityLabel + ']',
                 url: srcUrl,
                 quality: qualityLabel,
                 type: isHls ? 'm3u8' : 'mp4',
@@ -467,6 +475,8 @@ async function getStreams(tmdbId, mediaType, season, episode) {
             params.totalSeasons = meta.totalSeasons;
             params.seasonId = season != null ? String(season) : '1';
             params.episodeId = episode != null ? String(episode) : '1';
+            params.season = season != null ? Number(season) : 1;
+            params.episode = episode != null ? Number(episode) : 1;
         }
 
         let seed;

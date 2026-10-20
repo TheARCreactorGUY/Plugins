@@ -1,8 +1,9 @@
 /**
- * Big sample verification suite for Movy and Bingr plugins
+ * Big sample verification suite for Movy, Bingr, and 4KHDHub plugins
  */
 const movy = require('./providers/movy.js');
 const bingr = require('./providers/bingr.js');
+const hub = require('./providers/4khdhub.js');
 
 async function checkPlayable(stream) {
   try {
@@ -40,18 +41,30 @@ async function testSample(label, tmdbId, type, s, e) {
   });
   console.log(`Servers discovered: ${[...new Set(serverNames)].join(', ')}`);
 
-  // Check if Cancun is present
+  // Check Cancun
   const hasCancun = movyStreams.some(st => st.name.toLowerCase().includes('cancun'));
   console.log(`* Cancun server present: ${hasCancun ? 'YES ✓' : 'NO (not available for this title)'}`);
 
-  // Check playability of first 3 and Cancun if present
-  const toCheckMovy = movyStreams.slice(0, 3);
+  // Check MatchScorer title compliance
+  if (movyStreams.length > 0) {
+    console.log(`Sample title: "${movyStreams[0].title}"`);
+    if (type !== 'movie') {
+      const hasSe = /S\d{2}E\d{2}/.test(movyStreams[0].title);
+      console.log(`* TV SxxExx marker present: ${hasSe ? 'YES ✓ (MatchScorer +0.25 Bonus)' : 'NO ✗'}`);
+    } else {
+      const hasSe = /S\d{2}E\d{2}/.test(movyStreams[0].title);
+      console.log(`* Movie clean of TV markers: ${!hasSe ? 'YES ✓ (Clean Movie)' : 'NO ✗'}`);
+    }
+  }
+
+  // Check playability of first 2 and Cancun if present
+  const toCheckMovy = movyStreams.slice(0, 2);
   const cancunStream = movyStreams.find(st => st.name.toLowerCase().includes('cancun'));
   if (cancunStream && !toCheckMovy.includes(cancunStream)) toCheckMovy.push(cancunStream);
 
   for (const st of toCheckMovy) {
     const p = await checkPlayable(st);
-    console.log(`  - ${st.name} => ${p.ok ? 'PLAYABLE (HTTP ' + p.status + ')' : 'FAIL (' + (p.error || p.status) + ')'} [Subs: ${st.subtitles?.length || 0}]`);
+    console.log(`  - ${st.name} => ${p.ok ? 'PLAYABLE (HTTP ' + p.status + ')' : 'STATUS (' + (p.error || p.status) + ')'} [Subs: ${st.subtitles?.length || 0}]`);
   }
 
   // Test Bingr
@@ -64,9 +77,37 @@ async function testSample(label, tmdbId, type, s, e) {
   });
   console.log(`Servers discovered: ${[...new Set(bServerNames)].join(', ')}`);
 
-  for (const st of bingrStreams.slice(0, 4)) {
+  if (bingrStreams.length > 0) {
+    console.log(`Sample title: "${bingrStreams[0].title}"`);
+    if (type !== 'movie') {
+      const hasSe = /S\d{2}E\d{2}/.test(bingrStreams[0].title);
+      console.log(`* TV SxxExx marker present: ${hasSe ? 'YES ✓ (MatchScorer +0.25 Bonus)' : 'NO ✗'}`);
+    } else {
+      const hasSe = /S\d{2}E\d{2}/.test(bingrStreams[0].title);
+      console.log(`* Movie clean of TV markers: ${!hasSe ? 'YES ✓ (Clean Movie)' : 'NO ✗'}`);
+    }
+  }
+
+  for (const st of bingrStreams.slice(0, 3)) {
     const p = await checkPlayable(st);
-    console.log(`  - ${st.name} => ${p.ok ? 'PLAYABLE (HTTP ' + p.status + ')' : 'FAIL (' + (p.error || p.status) + ')'} [Subs: ${st.subtitles?.length || 0}]`);
+    console.log(`  - ${st.name} => ${p.ok ? 'PLAYABLE (HTTP ' + p.status + ')' : 'STATUS (' + (p.error || p.status) + ')'} [Subs: ${st.subtitles?.length || 0}]`);
+  }
+
+  // Test 4KHDHub
+  console.log(`\n--- [4KHDHUB PLUGIN] ---`);
+  const hubStreams = await hub.getStreams(tmdbId, type, s, e);
+  console.log(`4KHDHub found ${hubStreams.length} stream(s):`);
+  for (const st of hubStreams) {
+    console.log(`  - ${st.name} => ${st.title} [${st.quality}]`);
+  }
+  if (hubStreams.length > 0) {
+    if (type !== 'movie') {
+      const hasSe = /S\d{2}E\d{2}/.test(hubStreams[0].title);
+      console.log(`* TV SxxExx marker present: ${hasSe ? 'YES ✓ (MatchScorer +0.25 Bonus)' : 'NO ✗'}`);
+    } else {
+      const hasSe = /S\d{2}E\d{2}/.test(hubStreams[0].title);
+      console.log(`* Movie clean of TV markers: ${!hasSe ? 'YES ✓ (Clean Movie)' : 'NO ✗'}`);
+    }
   }
 }
 

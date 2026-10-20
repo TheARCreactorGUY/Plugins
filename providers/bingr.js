@@ -181,9 +181,13 @@ async function queryVidbolt(tmdbId, mediaType, season, episode, meta, timeoutMs)
                         const qualityLabel = src.quality ? String(src.quality) : '1080p';
                         const isHls = src.kind === 'hls' || src.url.includes('.m3u8');
 
+                        const isMovie = mediaType === 'movie';
+                        const epTag = !isMovie ? ('S' + String(season || 1).padStart(2, '0') + 'E' + String(episode || 1).padStart(2, '0')) : '';
+                        const titlePrefix = !isMovie ? (meta.title + ' ' + epTag) : (meta.title + (meta.year ? ' (' + meta.year + ')' : ''));
+
                         streams.push({
                             name: 'Bingr | Vidbolt - ' + serverName + ' • ' + langInfo.name + ' [' + langInfo.tag + '] (' + qualityLabel + ')',
-                            title: meta.title + ' [' + langInfo.name + '] [' + langInfo.tag + '] - Vidbolt ' + serverName + ' [' + qualityLabel + ']',
+                            title: titlePrefix + ' [' + langInfo.tag + '] - Vidbolt ' + serverName + ' [' + qualityLabel + ']',
                             url: src.url,
                             quality: qualityLabel,
                             type: isHls ? 'm3u8' : 'mp4',
@@ -282,12 +286,15 @@ async function queryPunkflix(tmdbId, mediaType, season, episode, meta, timeoutMs
             }
 
             const qualityLabel = (data.quality && data.quality.resolution) ? data.quality.resolution : '1080p';
+            const isMovie = mediaType === 'movie';
+            const epTag = !isMovie ? ('S' + String(season || 1).padStart(2, '0') + 'E' + String(episode || 1).padStart(2, '0')) : '';
+            const titlePrefix = !isMovie ? (meta.title + ' ' + epTag) : (meta.title + (meta.year ? ' (' + meta.year + ')' : ''));
 
             // HLS stream
             if (data.stream && data.stream.hls) {
                 streams.push({
                     name: 'Bingr | Cinezo - Jennifer • ' + langInfo.name + ' ' + tagString + ' (' + qualityLabel + ')',
-                    title: meta.title + ' ' + tagString + ' - Cinezo Jennifer [' + qualityLabel + ']',
+                    title: titlePrefix + ' ' + tagString + ' - Cinezo Jennifer [' + qualityLabel + ']',
                     url: data.stream.hls,
                     quality: qualityLabel,
                     type: 'm3u8',
@@ -302,7 +309,7 @@ async function queryPunkflix(tmdbId, mediaType, season, episode, meta, timeoutMs
                 const fileUrl = data.stream.remux || data.stream.original;
                 streams.push({
                     name: 'Bingr | Cinezo - Direct • ' + langInfo.name + ' ' + tagString + ' (' + qualityLabel + ')',
-                    title: meta.title + ' ' + tagString + ' - Cinezo Direct [' + qualityLabel + ']',
+                    title: titlePrefix + ' ' + tagString + ' - Cinezo Direct [' + qualityLabel + ']',
                     url: fileUrl,
                     quality: qualityLabel,
                     type: 'mp4',
@@ -370,10 +377,14 @@ async function queryFlikhub(tmdbId, mediaType, season, episode, meta, timeoutMs)
 
             const langInfo = getLanguageInfo(meta.originalLanguage);
 
+            const isMovie = mediaType === 'movie';
+            const epTag = !isMovie ? ('S' + String(season || 1).padStart(2, '0') + 'E' + String(episode || 1).padStart(2, '0')) : '';
+            const titlePrefix = !isMovie ? (meta.title + ' ' + epTag) : (meta.title + (meta.year ? ' (' + meta.year + ')' : ''));
+
             if (data.source && data.source.url) {
                 streams.push({
                     name: 'Bingr | Flikhub - Berlin • ' + langInfo.name + ' [' + langInfo.tag + '] (1080p)',
-                    title: meta.title + ' [' + langInfo.name + '] [' + langInfo.tag + '] - Flikhub Berlin [1080p]',
+                    title: titlePrefix + ' [' + langInfo.tag + '] - Flikhub Berlin [1080p]',
                     url: data.source.url,
                     quality: '1080p',
                     type: 'm3u8',
@@ -425,13 +436,17 @@ async function queryFilmu(tmdbId, mediaType, season, episode, meta, timeoutMs) {
             const data = await res.json();
             const langInfo = getLanguageInfo(meta.originalLanguage);
 
+            const isMovie = mediaType === 'movie';
+            const epTag = !isMovie ? ('S' + String(season || 1).padStart(2, '0') + 'E' + String(episode || 1).padStart(2, '0')) : '';
+            const titlePrefix = !isMovie ? (meta.title + ' ' + epTag) : (meta.title + (meta.year ? ' (' + meta.year + ')' : ''));
+
             if (Array.isArray(data.sources)) {
                 for (let s of data.sources) {
                     if (s && s.url) {
                         const qualityLabel = s.quality ? String(s.quality) : '1080p';
                         streams.push({
                             name: 'Bingr | Filmu - Singularity • ' + langInfo.name + ' [' + langInfo.tag + '] (' + qualityLabel + ')',
-                            title: meta.title + ' [' + langInfo.name + '] [' + langInfo.tag + '] - Filmu Singularity [' + qualityLabel + ']',
+                            title: titlePrefix + ' [' + langInfo.tag + '] - Filmu Singularity [' + qualityLabel + ']',
                             url: s.url,
                             quality: qualityLabel,
                             type: 'm3u8',
@@ -449,7 +464,7 @@ async function queryFilmu(tmdbId, mediaType, season, episode, meta, timeoutMs) {
 
                 streams.push({
                     name: 'Bingr | Filmu - Singularity • ' + streamLang.name + ' [' + streamLang.tag + '] (' + qualityLabel + ')',
-                    title: meta.title + ' [' + streamLang.name + '] [' + streamLang.tag + '] - Filmu Singularity [' + qualityLabel + ']',
+                    title: titlePrefix + ' [' + streamLang.tag + '] - Filmu Singularity [' + qualityLabel + ']',
                     url: streamUrl,
                     quality: qualityLabel,
                     type: 'm3u8',
