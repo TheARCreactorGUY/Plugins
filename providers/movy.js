@@ -4,6 +4,9 @@
  * Implements high-speed parallel scraping across Movy.sx CDN servers
  * (Miami, Boise, Atlanta, Phoenix, Vegas, Reno, Oakland, Seattle, Dallas, Berlin, Paris)
  * with proprietary stream cipher reverse-engineered from Next.js bundles.
+ *
+ * Explicitly names the audio language with stream sources (e.g. English, German, French, Multi)
+ * and aggregates cross-server subtitle tracks to all playable streams.
  */
 
 const BASE_URL = 'https://www.movy.sx';
@@ -190,19 +193,19 @@ async function resolveMetadata(tmdbId, mediaType) {
     };
 }
 
-// Server definitions
+// Server definitions with explicit audio language names
 const SERVERS = [
-    { name: 'Miami', endpoint: 'miami', note: 'Original audio (4K/1080p)' },
-    { name: 'Boise', endpoint: 'boise', note: 'Original audio (4K/1080p)' },
-    { name: 'Atlanta', endpoint: 'atlanta', note: 'Original audio (1080p)' },
-    { name: 'Phoenix', endpoint: 'phoenix', note: 'Original audio (1080p)' },
-    { name: 'Vegas', endpoint: 'vegas', note: 'Original audio' },
-    { name: 'Reno', endpoint: 'reno', note: 'Original audio' },
-    { name: 'Oakland', endpoint: 'oakland', note: 'Original audio' },
-    { name: 'Seattle', endpoint: 'seattle', note: 'Original audio' },
-    { name: 'Dallas', endpoint: 'dallas', note: 'Original audio' },
-    { name: 'Berlin', endpoint: 'berlin', note: 'German audio' },
-    { name: 'Paris', endpoint: 'paris', note: 'French audio' }
+    { name: 'Miami', endpoint: 'miami', audioName: 'English', langTag: 'ENG', langCode: 'en' },
+    { name: 'Boise', endpoint: 'boise', audioName: 'English', langTag: 'ENG', langCode: 'en' },
+    { name: 'Atlanta', endpoint: 'atlanta', audioName: 'English', langTag: 'ENG', langCode: 'en' },
+    { name: 'Phoenix', endpoint: 'phoenix', audioName: 'English', langTag: 'ENG', langCode: 'en' },
+    { name: 'Vegas', endpoint: 'vegas', audioName: 'English', langTag: 'ENG', langCode: 'en' },
+    { name: 'Reno', endpoint: 'reno', audioName: 'English', langTag: 'ENG', langCode: 'en' },
+    { name: 'Oakland', endpoint: 'oakland', audioName: 'English', langTag: 'ENG', langCode: 'en' },
+    { name: 'Seattle', endpoint: 'seattle', audioName: 'English', langTag: 'ENG', langCode: 'en' },
+    { name: 'Dallas', endpoint: 'dallas', audioName: 'English', langTag: 'ENG', langCode: 'en' },
+    { name: 'Berlin', endpoint: 'berlin', audioName: 'German', langTag: 'GER', langCode: 'de' },
+    { name: 'Paris', endpoint: 'paris', audioName: 'French', langTag: 'FRA', langCode: 'fr' }
 ];
 
 async function queryServer(server, params, tmdbId, seed, timeoutMs) {
@@ -249,18 +252,18 @@ async function queryServer(server, params, tmdbId, seed, timeoutMs) {
         if (!res.ok) {
             const errBody = await res.text();
             console.log('[Movy] Server ' + server.name + ' returned HTTP ' + res.status + ': ' + errBody.slice(0, 80));
-            return [];
+            return { streams: [], subtitles: [] };
         }
 
         const rawText = await res.text();
-        if (!rawText) return [];
+        if (!rawText) return { streams: [], subtitles: [] };
 
         let decryptedJson;
         try {
             decryptedJson = decryptPayload(rawText, seed, tmdbId);
         } catch (decErr) {
             console.error('[Movy] Decrypt failed for ' + server.name + ': ' + decErr.message);
-            return [];
+            return { streams: [], subtitles: [] };
         }
 
         let parsed;
@@ -268,7 +271,7 @@ async function queryServer(server, params, tmdbId, seed, timeoutMs) {
             parsed = JSON.parse(decryptedJson);
         } catch (pErr) {
             console.error('[Movy] JSON parse failed for ' + server.name + ': ' + pErr.message);
-            return [];
+            return { streams: [], subtitles: [] };
         }
 
         const rawSources = parsed.sources || [];
@@ -278,10 +281,24 @@ async function queryServer(server, params, tmdbId, seed, timeoutMs) {
             url: s.url,
             language: s.language || s.lang || 'English',
             name: s.language || s.lang || 'English',
-            headers: DEFAULT_HEADERS
-        }));
+            headers: Object.assign({}, DEFAULT_HEADERS)
+        })).filter(s => s.url && typeof s.url === 'string');
+
+        // Check if multiple audio tracks are reported in payload
+        let audioLabel = server.audioName;
+        let isMulti = false;
+        if (parsed.audios && Array.isArray(parsed.audios) && parsed.audios.length > 1) {
+            isMulti = true;
+            audioLabel = 'Multi';
+        } else if (parsed.audio && Array.isArray(parsed.audio) && parsed.audio.length > 1) {
+            isMulti = true;
+            audioLabel = 'Multi';
+        }
 
         const streams = [];
+        const langTag = isMulti ? 'MULTI' : (server.langTag || 'ENG');
+        const langCode = isMulti ? 'multi' : (server.langCode || 'en');
+
         for (let i = 0; i < rawSources.length; i++) {
             const src = rawSources[i];
             if (!src || !src.url || typeof src.url !== 'string') continue;
@@ -292,26 +309,27 @@ async function queryServer(server, params, tmdbId, seed, timeoutMs) {
             const isHls = srcUrl.toLowerCase().indexOf('.m3u8') >= 0 || srcUrl.toLowerCase().indexOf('hls') >= 0;
 
             streams.push({
-                name: 'Movy | ' + server.name + ' (' + qualityLabel + ')',
-                title: (params.title || 'Video') + ' - ' + server.name + ' [' + qualityLabel + ']',
+                name: 'Movy | ' + server.name + ' • ' + audioLabel + ' (' + qualityLabel + ')',
+                title: (params.title || 'Video') + ' [' + audioLabel + '] [' + langTag + '] - ' + server.name + ' [' + qualityLabel + ']',
                 url: srcUrl,
                 quality: qualityLabel,
                 type: isHls ? 'm3u8' : 'mp4',
                 provider: 'movy',
+                language: langCode,
                 headers: Object.assign({}, DEFAULT_HEADERS),
                 subtitles: mappedSubs
             });
         }
 
-        console.log('[Movy] Server ' + server.name + ' returned ' + streams.length + ' stream(s)');
-        return streams;
+        console.log('[Movy] Server ' + server.name + ' (' + audioLabel + ') returned ' + streams.length + ' stream(s), ' + mappedSubs.length + ' sub(s)');
+        return { streams, subtitles: mappedSubs };
     } catch (err) {
         if (err.name === 'AbortError') {
             console.log('[Movy] Server ' + server.name + ' timed out (8s)');
         } else {
             console.error('[Movy] Server ' + server.name + ' error: ' + err.message);
         }
-        return [];
+        return { streams: [], subtitles: [] };
     } finally {
         if (timer) clearTimeout(timer);
     }
@@ -366,12 +384,30 @@ async function getStreams(tmdbId, mediaType, season, episode) {
         const serverResults = await Promise.all(serverPromises);
 
         const allStreams = [];
+        const masterSubsMap = new Map();
+
         for (let i = 0; i < serverResults.length; i++) {
-            const list = serverResults[i];
-            if (Array.isArray(list)) {
-                for (let j = 0; j < list.length; j++) {
-                    allStreams.push(list[j]);
+            const res = serverResults[i];
+            if (!res) continue;
+            const streamsList = res.streams || (Array.isArray(res) ? res : []);
+            const subsList = res.subtitles || [];
+
+            for (let j = 0; j < streamsList.length; j++) {
+                allStreams.push(streamsList[j]);
+            }
+            for (let k = 0; k < subsList.length; k++) {
+                const sub = subsList[k];
+                if (sub && sub.url && !masterSubsMap.has(sub.language)) {
+                    masterSubsMap.set(sub.language, sub);
                 }
+            }
+        }
+
+        const aggregatedSubtitles = Array.from(masterSubsMap.values());
+        if (aggregatedSubtitles.length > 0) {
+            console.log('[Movy] Cross-server subtitles aggregated: ' + aggregatedSubtitles.length + ' tracks attached to all streams');
+            for (let i = 0; i < allStreams.length; i++) {
+                allStreams[i].subtitles = aggregatedSubtitles;
             }
         }
 
