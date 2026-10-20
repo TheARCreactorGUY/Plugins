@@ -5,8 +5,9 @@
  * (Miami, Boise, Atlanta, Phoenix, Vegas, Reno, Oakland, Seattle, Dallas, Berlin, Paris)
  * with proprietary stream cipher reverse-engineered from Next.js bundles.
  *
- * Explicitly names the audio language with stream sources (e.g. English, German, French, Multi)
- * and aggregates cross-server subtitle tracks to all playable streams.
+ * Audio language is dynamically determined in real-time from media metadata,
+ * stream properties, and server capability (e.g. Japanese for anime, English for US films,
+ * German/French for dedicated dubs, and Multi whenever multiple audio tracks are available).
  */
 
 const BASE_URL = 'https://www.movy.sx';
@@ -158,6 +159,35 @@ async function fetchSeed(tmdbId, forceRefresh = false) {
     return data.seed;
 }
 
+// Dynamic language lookup dictionary
+const LANGUAGE_MAP = {
+    'en': { name: 'English', tag: 'ENG' },
+    'ja': { name: 'Japanese', tag: 'JPN' },
+    'ko': { name: 'Korean', tag: 'KOR' },
+    'es': { name: 'Spanish', tag: 'SPA' },
+    'fr': { name: 'French', tag: 'FRA' },
+    'de': { name: 'German', tag: 'GER' },
+    'it': { name: 'Italian', tag: 'ITA' },
+    'hi': { name: 'Hindi', tag: 'HIN' },
+    'zh': { name: 'Chinese', tag: 'CHI' },
+    'ru': { name: 'Russian', tag: 'RUS' },
+    'pt': { name: 'Portuguese', tag: 'POR' },
+    'ar': { name: 'Arabic', tag: 'ARA' }
+};
+
+function getLanguageInfo(code) {
+    if (!code) return { name: 'English', tag: 'ENG' };
+    const lower = String(code).toLowerCase().trim();
+    if (LANGUAGE_MAP[lower]) return LANGUAGE_MAP[lower];
+    // Check by name match
+    for (const k in LANGUAGE_MAP) {
+        if (LANGUAGE_MAP[k].name.toLowerCase() === lower) {
+            return LANGUAGE_MAP[k];
+        }
+    }
+    return { name: lower.charAt(0).toUpperCase() + lower.slice(1), tag: lower.slice(0, 3).toUpperCase() };
+}
+
 // Metadata resolution helper
 async function resolveMetadata(tmdbId, mediaType) {
     const extraArgs = (typeof globalThis !== 'undefined' && globalThis.__CALL_ARGS__) || {};
@@ -165,8 +195,9 @@ async function resolveMetadata(tmdbId, mediaType) {
     let year = extraArgs.year || (extraArgs.releaseDate ? extraArgs.releaseDate.substring(0, 4) : '');
     let imdbId = extraArgs.imdbId || '';
     let totalSeasons = extraArgs.totalSeasons || '';
+    let origLang = extraArgs.originalLanguage || extraArgs.original_language || '';
 
-    if (!title || !year) {
+    if (!title || !year || !origLang) {
         try {
             const tmdbType = mediaType === 'movie' ? 'movie' : 'tv';
             const metaRes = await fetch(TMDB_PROXY_URL + '/' + tmdbType + '/' + tmdbId, {
@@ -179,6 +210,7 @@ async function resolveMetadata(tmdbId, mediaType) {
                 year = year || (relDate ? relDate.substring(0, 4) : '');
                 imdbId = imdbId || meta.imdb_id || (meta.external_ids ? meta.external_ids.imdb_id : '') || '';
                 totalSeasons = totalSeasons || meta.number_of_seasons || '';
+                origLang = origLang || meta.original_language || '';
             }
         } catch (e) {
             console.log('[Movy] Metadata fallback lookup failed: ' + e.message);
@@ -189,23 +221,24 @@ async function resolveMetadata(tmdbId, mediaType) {
         title: title || ('Title ' + tmdbId),
         year: year ? String(year) : '2020',
         imdbId: imdbId || '',
-        totalSeasons: totalSeasons ? String(totalSeasons) : '1'
+        totalSeasons: totalSeasons ? String(totalSeasons) : '1',
+        originalLanguage: origLang || (mediaType === 'anime' ? 'ja' : 'en')
     };
 }
 
-// Server definitions with explicit audio language names
+// Server definitions: servers marked as null dubbedLanguage dynamically inherit the media's real-time originalLanguage
 const SERVERS = [
-    { name: 'Miami', endpoint: 'miami', audioName: 'English', langTag: 'ENG', langCode: 'en' },
-    { name: 'Boise', endpoint: 'boise', audioName: 'English', langTag: 'ENG', langCode: 'en' },
-    { name: 'Atlanta', endpoint: 'atlanta', audioName: 'English', langTag: 'ENG', langCode: 'en' },
-    { name: 'Phoenix', endpoint: 'phoenix', audioName: 'English', langTag: 'ENG', langCode: 'en' },
-    { name: 'Vegas', endpoint: 'vegas', audioName: 'English', langTag: 'ENG', langCode: 'en' },
-    { name: 'Reno', endpoint: 'reno', audioName: 'English', langTag: 'ENG', langCode: 'en' },
-    { name: 'Oakland', endpoint: 'oakland', audioName: 'English', langTag: 'ENG', langCode: 'en' },
-    { name: 'Seattle', endpoint: 'seattle', audioName: 'English', langTag: 'ENG', langCode: 'en' },
-    { name: 'Dallas', endpoint: 'dallas', audioName: 'English', langTag: 'ENG', langCode: 'en' },
-    { name: 'Berlin', endpoint: 'berlin', audioName: 'German', langTag: 'GER', langCode: 'de' },
-    { name: 'Paris', endpoint: 'paris', audioName: 'French', langTag: 'FRA', langCode: 'fr' }
+    { name: 'Miami', endpoint: 'miami', dubbedLanguage: null },
+    { name: 'Boise', endpoint: 'boise', dubbedLanguage: null },
+    { name: 'Atlanta', endpoint: 'atlanta', dubbedLanguage: null },
+    { name: 'Phoenix', endpoint: 'phoenix', dubbedLanguage: null },
+    { name: 'Vegas', endpoint: 'vegas', dubbedLanguage: null },
+    { name: 'Reno', endpoint: 'reno', dubbedLanguage: null },
+    { name: 'Oakland', endpoint: 'oakland', dubbedLanguage: null },
+    { name: 'Seattle', endpoint: 'seattle', dubbedLanguage: null },
+    { name: 'Dallas', endpoint: 'dallas', dubbedLanguage: null },
+    { name: 'Berlin', endpoint: 'berlin', dubbedLanguage: 'de' },
+    { name: 'Paris', endpoint: 'paris', dubbedLanguage: 'fr' }
 ];
 
 async function queryServer(server, params, tmdbId, seed, timeoutMs) {
@@ -284,44 +317,94 @@ async function queryServer(server, params, tmdbId, seed, timeoutMs) {
             headers: Object.assign({}, DEFAULT_HEADERS)
         })).filter(s => s.url && typeof s.url === 'string');
 
-        // Check if multiple audio tracks are reported in payload
-        let audioLabel = server.audioName;
+        // Dynamically detect multi-audio or audio language from real-time payload
         let isMulti = false;
+        let detectedLang = null;
+
         if (parsed.audios && Array.isArray(parsed.audios) && parsed.audios.length > 1) {
             isMulti = true;
-            audioLabel = 'Multi';
         } else if (parsed.audio && Array.isArray(parsed.audio) && parsed.audio.length > 1) {
             isMulti = true;
-            audioLabel = 'Multi';
+        } else if (typeof parsed.audio === 'string' && parsed.audio.toLowerCase().includes('multi')) {
+            isMulti = true;
+        } else if (parsed.audio && typeof parsed.audio === 'string') {
+            detectedLang = parsed.audio;
+        } else if (parsed.language && typeof parsed.language === 'string') {
+            detectedLang = parsed.language;
+        }
+
+        let baseAudio;
+        let baseTag;
+        let baseCode;
+
+        if (isMulti) {
+            baseAudio = 'Multi';
+            baseTag = 'MULTI';
+            baseCode = 'multi';
+        } else if (detectedLang) {
+            const info = getLanguageInfo(detectedLang);
+            baseAudio = info.name;
+            baseTag = info.tag;
+            baseCode = detectedLang.toLowerCase();
+        } else if (server.dubbedLanguage) {
+            const info = getLanguageInfo(server.dubbedLanguage);
+            baseAudio = info.name;
+            baseTag = info.tag;
+            baseCode = server.dubbedLanguage;
+        } else {
+            // Dynamically assign media's real-time original language
+            const origInfo = getLanguageInfo(params.originalLanguage);
+            baseAudio = origInfo.name;
+            baseTag = origInfo.tag;
+            baseCode = params.originalLanguage || 'en';
         }
 
         const streams = [];
-        const langTag = isMulti ? 'MULTI' : (server.langTag || 'ENG');
-        const langCode = isMulti ? 'multi' : (server.langCode || 'en');
-
         for (let i = 0; i < rawSources.length; i++) {
             const src = rawSources[i];
             if (!src || !src.url || typeof src.url !== 'string') continue;
             const srcUrl = src.url.trim();
             if (!srcUrl.startsWith('http')) continue;
 
+            let itemAudio = baseAudio;
+            let itemTag = baseTag;
+            let itemCode = baseCode;
+
+            // Check if individual source specifies an audio or multi cue
+            if (src.audio && typeof src.audio === 'string') {
+                if (src.audio.toLowerCase().includes('multi')) {
+                    itemAudio = 'Multi';
+                    itemTag = 'MULTI';
+                    itemCode = 'multi';
+                } else {
+                    const info = getLanguageInfo(src.audio);
+                    itemAudio = info.name;
+                    itemTag = info.tag;
+                    itemCode = src.audio.toLowerCase();
+                }
+            } else if (srcUrl.toLowerCase().includes('multi') || srcUrl.toLowerCase().includes('dual')) {
+                itemAudio = 'Multi';
+                itemTag = 'MULTI';
+                itemCode = 'multi';
+            }
+
             const qualityLabel = src.quality ? String(src.quality) : 'Auto';
             const isHls = srcUrl.toLowerCase().indexOf('.m3u8') >= 0 || srcUrl.toLowerCase().indexOf('hls') >= 0;
 
             streams.push({
-                name: 'Movy | ' + server.name + ' • ' + audioLabel + ' (' + qualityLabel + ')',
-                title: (params.title || 'Video') + ' [' + audioLabel + '] [' + langTag + '] - ' + server.name + ' [' + qualityLabel + ']',
+                name: 'Movy | ' + server.name + ' • ' + itemAudio + ' (' + qualityLabel + ')',
+                title: (params.title || 'Video') + ' [' + itemAudio + '] [' + itemTag + '] - ' + server.name + ' [' + qualityLabel + ']',
                 url: srcUrl,
                 quality: qualityLabel,
                 type: isHls ? 'm3u8' : 'mp4',
                 provider: 'movy',
-                language: langCode,
+                language: itemCode,
                 headers: Object.assign({}, DEFAULT_HEADERS),
                 subtitles: mappedSubs
             });
         }
 
-        console.log('[Movy] Server ' + server.name + ' (' + audioLabel + ') returned ' + streams.length + ' stream(s), ' + mappedSubs.length + ' sub(s)');
+        console.log('[Movy] Server ' + server.name + ' (' + baseAudio + ') returned ' + streams.length + ' stream(s), ' + mappedSubs.length + ' sub(s)');
         return { streams, subtitles: mappedSubs };
     } catch (err) {
         if (err.name === 'AbortError') {
@@ -355,14 +438,15 @@ async function getStreams(tmdbId, mediaType, season, episode) {
     try {
         const isMovie = mediaType === 'movie';
         const meta = await resolveMetadata(tmdbId, mediaType);
-        console.log('[Movy] Resolved metadata: "' + meta.title + '" (' + meta.year + ')');
+        console.log('[Movy] Resolved metadata: "' + meta.title + '" (' + meta.year + '), Original Language: ' + meta.originalLanguage);
 
         const params = {
             title: meta.title,
             mediaType: isMovie ? 'movie' : 'tv',
             year: meta.year,
             tmdbId: String(tmdbId),
-            imdbId: meta.imdbId
+            imdbId: meta.imdbId,
+            originalLanguage: meta.originalLanguage
         };
 
         if (!isMovie) {
