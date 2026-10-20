@@ -1,6 +1,6 @@
 {
-  "name": "Movy-Provider",
-  "version": "1.0.0",
+  "name": "Community-Providers",
+  "version": "1.1.0",
   "scrapers": [
     {
       "id": "movy",
@@ -25,7 +25,34 @@
         "en",
         "de",
         "fr",
-        "es"
+        "es",
+        "ja"
+      ]
+    },
+    {
+      "id": "bingr",
+      "name": "Bingr",
+      "description": "Multi-source streaming provider for movies, TV shows, and anime aggregated from Bingr endpoints with dynamic multi-audio and subtitle support",
+      "version": "1.0.0",
+      "author": "Secondary Agent",
+      "supportedTypes": [
+        "movie",
+        "tv",
+        "anime"
+      ],
+      "filename": "providers/bingr.js",
+      "enabled": true,
+      "hasSettings": false,
+      "formats": [
+        "m3u8",
+        "mp4"
+      ],
+      "logo": "https://bingr.one/favicon.ico",
+      "contentLanguage": [
+        "en",
+        "ja",
+        "hi",
+        "multi"
       ]
     }
   ]
