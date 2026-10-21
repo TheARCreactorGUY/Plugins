@@ -5,27 +5,28 @@
  * Supports Movies, TV Series, Webseries, and Anime.
  *
  * Native Direct High-Speed Engines:
- *  - FSL R2 Server (Direct Cloudflare R2 Presigned Streaming)
- *  - Server : 10Gbps (Pixel Cloud / Google User Content)
- *  - ZipDisk Server (Cloudflare Edge Direct Stream)
- *  - Pixeldrain Server (Direct Stream CDN)
- *  - FSL Direct / Buzz Server (High-Speed Direct Stream)
+ *  - 4KHDHub | FSL R2 Server (Direct Cloudflare R2 Presigned Streaming)
+ *  - 4KHDHub | Server : 10Gbps (Pixel Cloud / Google User Content)
+ *  - 4KHDHub | ZipDisk Server (Cloudflare Edge Direct Stream)
+ *  - 4KHDHub | Pixeldrain Server (Direct Stream CDN)
+ *  - 4KHDHub | FSL Direct / Buzz Server (High-Speed Direct Stream)
  *
+ * Compatible with Android QuickJS runtime (pure atob, no Node.js Buffer, no AbortSignal.timeout).
  * Formatted specifically for MatchScorer.kt:
  *  - TV / Series / Anime: "Title SxxExx [Audio] - Server [Quality]" (+0.25 episode bonus)
  *  - Movies: "Title (Year) [Audio] - Server [Quality]" (clean movie match)
  */
 
-const BASE_URL = 'https://4khdhub.one';
-const TMDB_PROXY_URL = 'https://db.wecollege.net/3';
+var BASE_URL = 'https://4khdhub.one';
+var TMDB_PROXY_URL = 'https://db.wecollege.net/3';
 
-const DEFAULT_HEADERS = {
+var DEFAULT_HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
     'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
     'Referer': BASE_URL + '/'
 };
 
-const LANGUAGE_MAP = {
+var LANGUAGE_MAP = {
     'en': { name: 'English', tag: 'ENG' },
     'hi': { name: 'Hindi', tag: 'HIN' },
     'ja': { name: 'Japanese', tag: 'JPN' },
@@ -43,23 +44,23 @@ const LANGUAGE_MAP = {
 
 function getLanguageInfo(code) {
     if (!code) return { name: 'English', tag: 'ENG' };
-    const lower = String(code).toLowerCase().trim();
+    var lower = String(code).toLowerCase().trim();
     if (LANGUAGE_MAP[lower]) return LANGUAGE_MAP[lower];
-    for (const k in LANGUAGE_MAP) {
+    for (var k in LANGUAGE_MAP) {
         if (LANGUAGE_MAP[k].name.toLowerCase() === lower) {
             return LANGUAGE_MAP[k];
         }
     }
-    return { name: code.toUpperCase(), tag: code.slice(0, 3).toUpperCase() };
+    return { name: String(code).toUpperCase(), tag: String(code).slice(0, 3).toUpperCase() };
 }
 
 function parseAudiosFromText(text) {
     if (!text) return { isMulti: false, primary: 'English', tag: 'ENG', badge: '[ENG]' };
-    const upper = text.toUpperCase();
-    const langs = [];
+    var upper = String(text).toUpperCase();
+    var langs = [];
 
-    const isMultiCue = /\b(MULTI|DUAL|MULTI-AUDIO|DUAL-AUDIO)\b/i.test(upper) ||
-                       (/\b(HINDI|HIN)\b/i.test(upper) && /\b(ENGLISH|ENG)\b/i.test(upper));
+    var isMultiCue = /\b(MULTI|DUAL|MULTI-AUDIO|DUAL-AUDIO)\b/i.test(upper) ||
+                     (/\b(HINDI|HIN)\b/i.test(upper) && /\b(ENGLISH|ENG)\b/i.test(upper));
 
     if (/\b(HINDI|HIN)\b/i.test(upper)) langs.push('HIN');
     if (/\b(ENGLISH|ENG)\b/i.test(upper)) langs.push('ENG');
@@ -74,9 +75,13 @@ function parseAudiosFromText(text) {
     if (/\b(MALAYALAM|MAL)\b/i.test(upper)) langs.push('MAL');
     if (/\b(KANNADA|KAN)\b/i.test(upper)) langs.push('KAN');
 
-    const distinct = [...new Set(langs)];
+    var distinct = [];
+    for (var i = 0; i < langs.length; i++) {
+        if (distinct.indexOf(langs[i]) === -1) distinct.push(langs[i]);
+    }
+
     if (isMultiCue || distinct.length > 1) {
-        const langJoin = distinct.length > 0 ? distinct.join(' · ') : 'MULTI';
+        var langJoin = distinct.length > 0 ? distinct.join(' · ') : 'MULTI';
         return {
             isMulti: true,
             primary: 'Multi',
@@ -86,8 +91,8 @@ function parseAudiosFromText(text) {
     }
 
     if (distinct.length === 1) {
-        const tag = distinct[0];
-        const info = getLanguageInfo(tag.toLowerCase());
+        var tag = distinct[0];
+        var info = getLanguageInfo(tag.toLowerCase());
         return {
             isMulti: false,
             primary: info.name,
@@ -106,28 +111,39 @@ function parseAudiosFromText(text) {
 
 function parseQualityFromText(text) {
     if (!text) return '1080p';
-    if (/2160p|4k\b|uhd\b/i.test(text)) return '4K 2160p';
-    if (/1080p|fhd\b/i.test(text)) return '1080p';
-    if (/720p|hd\b/i.test(text)) return '720p';
-    if (/480p|sd\b/i.test(text)) return '480p';
+    var t = String(text);
+    if (/2160p|4k\b|uhd\b/i.test(t)) return '4K 2160p';
+    if (/1080p|fhd\b/i.test(t)) return '1080p';
+    if (/720p|hd\b/i.test(t)) return '720p';
+    if (/480p|sd\b/i.test(t)) return '480p';
     return '1080p';
 }
 
 function rot13(str) {
-    return str.replace(/[a-zA-Z]/g, function(c) {
+    return String(str).replace(/[a-zA-Z]/g, function(c) {
         var base = c <= 'Z' ? 65 : 97;
         return String.fromCharCode((c.charCodeAt(0) - base + 13) % 26 + base);
     });
 }
 
+function decodeB64(str) {
+    if (typeof atob === 'function') {
+        return atob(str);
+    }
+    if (typeof Buffer !== 'undefined') {
+        return Buffer.from(str, 'base64').toString('utf8');
+    }
+    return '';
+}
+
 function decodeGreenmotorsPayload(encoded) {
     try {
-        let s1 = Buffer.from(encoded, 'base64').toString('utf8');
-        let s2 = Buffer.from(s1, 'base64').toString('utf8');
-        let s3 = rot13(s2);
-        let s4 = Buffer.from(s3, 'base64').toString('utf8');
-        let parsed = JSON.parse(s4);
-        return Buffer.from(parsed.o, 'base64').toString('utf8');
+        var s1 = decodeB64(encoded);
+        var s2 = decodeB64(s1);
+        var s3 = rot13(s2);
+        var s4 = decodeB64(s3);
+        var parsed = JSON.parse(s4);
+        return decodeB64(parsed.o);
     } catch(e) {
         return null;
     }
@@ -135,15 +151,12 @@ function decodeGreenmotorsPayload(encoded) {
 
 async function resolveGreenmotorsUrl(gmUrl) {
     try {
-        const res = await fetch(gmUrl, {
-            headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-            },
-            redirect: 'follow',
-            signal: AbortSignal.timeout(6000)
+        var res = await fetch(gmUrl, {
+            headers: DEFAULT_HEADERS,
+            redirect: 'follow'
         });
-        const text = await res.text();
-        const m = text.match(/s\('o',\s*'([^']+)'/);
+        var text = await res.text();
+        var m = text.match(/s\('o',\s*'([^']+)'/);
         if (!m) return null;
         return decodeGreenmotorsPayload(m[1]);
     } catch(e) {
@@ -153,68 +166,66 @@ async function resolveGreenmotorsUrl(gmUrl) {
 
 async function resolveHubCloud(hubUrl) {
     try {
-        const res = await fetch(hubUrl, {
+        var res = await fetch(hubUrl, {
             headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                'User-Agent': DEFAULT_HEADERS['User-Agent'],
                 'Referer': 'https://greenmotors.cc/'
-            },
-            signal: AbortSignal.timeout(6000)
+            }
         });
-        const text = await res.text();
+        var text = await res.text();
 
         // Follow nested hubdrive redirects if needed
-        if (hubUrl.includes('hubdrive.')) {
-            const m = text.match(/https:\/\/hubcloud\.[a-z0-9.]+\/drive\/[a-z0-9]+/i);
+        if (hubUrl.indexOf('hubdrive.') >= 0) {
+            var m = text.match(/https:\/\/hubcloud\.[a-z0-9.]+\/drive\/[a-z0-9]+/i);
             if (m) return resolveHubCloud(m[0]);
         }
 
-        const gx = text.match(/https:\/\/gamerxyt\.com\/hubcloud\.php\?[^"'\s<>]+/);
+        var gx = text.match(/https:\/\/gamerxyt\.com\/hubcloud\.php\?[^"'\s<>]+/);
         if (!gx) return [];
 
-        const gRes = await fetch(gx[0], {
+        var gRes = await fetch(gx[0], {
             headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                'User-Agent': DEFAULT_HEADERS['User-Agent'],
                 'Referer': hubUrl
-            },
-            signal: AbortSignal.timeout(6000)
+            }
         });
-        const gText = await gRes.text();
+        var gText = await gRes.text();
 
-        const servers = [];
-        const seenUrls = new Set();
-        const aRegex = /<a[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi;
-        let match;
+        var servers = [];
+        var seenUrls = {};
+        var aRegex = /<a[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi;
+        var match;
         while ((match = aRegex.exec(gText)) !== null) {
-            const href = match[1];
-            const label = match[2].replace(/<[^>]+>/g, '').trim();
-            if (seenUrls.has(href)) continue;
-            seenUrls.add(href);
+            var href = match[1];
+            var label = match[2].replace(/<[^>]+>/g, '').trim();
+            if (seenUrls[href]) continue;
+            seenUrls[href] = true;
 
-            if (label.includes('FSL Server') || href.includes('r2.cloudflarestorage.com')) {
+            if (label.indexOf('FSL Server') >= 0 || href.indexOf('r2.cloudflarestorage.com') >= 0) {
                 servers.push({
                     serverName: 'FSL R2',
                     displayName: 'FSL R2 Server',
                     url: href
                 });
-            } else if (label.includes('10Gbps') || href.includes('pixel.hubcloud.ist')) {
+            } else if (label.indexOf('10Gbps') >= 0 || href.indexOf('pixel.hubcloud.ist') >= 0 || href.indexOf('gpdl.hubcloud.ist') >= 0) {
                 servers.push({
                     serverName: 'Pixel Cloud',
                     displayName: 'Server : 10Gbps (Pixel Cloud)',
                     url: href
                 });
-            } else if (label.includes('PixelServer') || href.includes('pixeldrain')) {
+            } else if (label.indexOf('PixelServer') >= 0 || href.indexOf('pixeldrain') >= 0) {
                 servers.push({
                     serverName: 'Pixeldrain',
                     displayName: 'Pixeldrain Server',
                     url: href
                 });
-            } else if (label.includes('ZipDisk') || href.includes('workers.dev')) {
+            } else if (label.indexOf('ZipDisk') >= 0 || href.indexOf('workers.dev') >= 0) {
                 servers.push({
                     serverName: 'ZipDisk',
                     displayName: 'ZipDisk Server',
                     url: href
                 });
-            } else if (label.includes('Buzz Server') || href.includes('fuckingfast')) {
+            } else if (label.indexOf('Buzz Server') >= 0 || href.indexOf('fuckingfast') >= 0) {
                 servers.push({
                     serverName: 'FSL Direct / Buzz',
                     displayName: 'FSL Direct / Buzz Server',
@@ -229,23 +240,23 @@ async function resolveHubCloud(hubUrl) {
 }
 
 async function resolveMetadata(tmdbId, mediaType, extraArgs) {
-    extraArgs = extraArgs || (typeof globalThis !== 'undefined' && globalThis.__CALL_ARGS__) || {};
-    let title = extraArgs.title || extraArgs.name || '';
-    let year = extraArgs.year || (extraArgs.releaseDate ? extraArgs.releaseDate.substring(0, 4) : '');
-    let origLang = extraArgs.originalLanguage || extraArgs.original_language || '';
+    var callArgs = (typeof globalThis !== 'undefined' && globalThis.__CALL_ARGS__) || {};
+    extraArgs = Object.assign({}, callArgs, extraArgs || {});
+    var title = extraArgs.title || extraArgs.name || '';
+    var year = extraArgs.year || (extraArgs.releaseDate ? String(extraArgs.releaseDate).substring(0, 4) : '');
+    var origLang = extraArgs.originalLanguage || extraArgs.original_language || '';
 
-    if (!title || !year || !origLang) {
+    if (!title) {
         try {
-            const tmdbType = mediaType === 'movie' ? 'movie' : 'tv';
-            const res = await fetch(TMDB_PROXY_URL + '/' + tmdbType + '/' + tmdbId, {
-                headers: DEFAULT_HEADERS,
-                signal: AbortSignal.timeout(5000)
+            var tmdbType = mediaType === 'movie' ? 'movie' : 'tv';
+            var res = await fetch(TMDB_PROXY_URL + '/' + tmdbType + '/' + tmdbId, {
+                headers: DEFAULT_HEADERS
             });
             if (res.ok) {
-                const meta = await res.json();
-                title = title || meta.title || meta.name || '';
-                const relDate = meta.release_date || meta.first_air_date || '';
-                year = year || (relDate ? relDate.substring(0, 4) : '');
+                var meta = await res.json();
+                title = meta.title || meta.name || '';
+                var relDate = meta.release_date || meta.first_air_date || '';
+                year = year || (relDate ? String(relDate).substring(0, 4) : '');
                 origLang = origLang || meta.original_language || '';
             }
         } catch (_) {}
@@ -260,30 +271,47 @@ async function resolveMetadata(tmdbId, mediaType, extraArgs) {
 
 async function search4khdHub(query, isMovie) {
     try {
-        const url = BASE_URL + '/?s=' + encodeURIComponent(query);
-        const res = await fetch(url, {
-            headers: DEFAULT_HEADERS,
-            signal: AbortSignal.timeout(7000)
+        var url = BASE_URL + '/?s=' + encodeURIComponent(query);
+        var res = await fetch(url, {
+            headers: DEFAULT_HEADERS
         });
         if (!res.ok) return [];
-        const text = await res.text();
+        var text = await res.text();
 
-        const results = [];
-        const cardRegex = /<a[^>]+href="([^"]*(?:-movie-|-series-)[^"]*)"[^>]*>([\s\S]*?)<\/a>/gi;
-        let m;
+        var results = [];
+        var cardRegex = /<a[^>]+href="([^"]+)"[^>]*class="[^"]*movie-card[^"]*"[^>]*>([\s\S]*?)<\/a>/gi;
+        var m;
         while ((m = cardRegex.exec(text)) !== null) {
-            const href = m[1];
-            const raw = m[2];
-            const titleMatch = raw.match(/alt="([^"]+)"/i) || raw.match(/aria-label="([^"]+)"/i);
-            const title = titleMatch ? titleMatch[1].replace(/ details$/i, '').trim() : '';
-            const fullUrl = href.startsWith('http') ? href : (BASE_URL + (href.startsWith('/') ? '' : '/') + href);
-            const isMov = fullUrl.includes('-movie-');
+            var href = m[1];
+            var raw = m[2];
+            var titleMatch = raw.match(/alt="([^"]+)"/i) || raw.match(/aria-label="([^"]+)"/i);
+            var title = titleMatch ? titleMatch[1].replace(/ details$/i, '').trim() : '';
+            var fullUrl = href.indexOf('http') === 0 ? href : (BASE_URL + (href.charAt(0) === '/' ? '' : '/') + href);
+            var isMov = fullUrl.indexOf('-movie-') >= 0;
             results.push({
                 url: fullUrl,
                 title: title,
                 type: isMov ? 'movie' : 'tv'
             });
         }
+
+        // Fallback card regex if movie-card class isn't matched
+        if (results.length === 0) {
+            var fallbackRegex = /<a[^>]+href="([^"]*(?:-movie-|-series-)[^"]*)"[^>]*>([\s\S]*?)<\/a>/gi;
+            var fMatch;
+            while ((fMatch = fallbackRegex.exec(text)) !== null) {
+                var fHref = fMatch[1];
+                var fTitleMatch = fMatch[2].match(/alt="([^"]+)"/i) || fMatch[2].match(/aria-label="([^"]+)"/i);
+                var fTitle = fTitleMatch ? fTitleMatch[1].replace(/ details$/i, '').trim() : '';
+                var fFullUrl = fHref.indexOf('http') === 0 ? fHref : (BASE_URL + (fHref.charAt(0) === '/' ? '' : '/') + fHref);
+                results.push({
+                    url: fFullUrl,
+                    title: fTitle,
+                    type: fFullUrl.indexOf('-movie-') >= 0 ? 'movie' : 'tv'
+                });
+            }
+        }
+
         return results;
     } catch(e) {
         return [];
@@ -291,55 +319,55 @@ async function search4khdHub(query, isMovie) {
 }
 
 async function getStreams(tmdbId, mediaType, season, episode, extraArgs) {
-    extraArgs = extraArgs || {};
-    const isMovie = mediaType === 'movie';
-    const sNum = Number(season) || 1;
-    const eNum = Number(episode) || 1;
+    var callArgs = (typeof globalThis !== 'undefined' && globalThis.__CALL_ARGS__) || {};
+    extraArgs = Object.assign({}, callArgs, extraArgs || {});
+    var isMovie = mediaType === 'movie';
+    var sNum = Number(season) || 1;
+    var eNum = Number(episode) || 1;
 
     console.log('[4KHDHub] Fetching streams for ' + (isMovie ? 'movie' : 'tv') + ' TMDB: ' + tmdbId +
         (!isMovie ? ' (S:' + sNum + ' E:' + eNum + ')' : ''));
 
-    const meta = await resolveMetadata(tmdbId, mediaType, extraArgs);
+    var meta = await resolveMetadata(tmdbId, mediaType, extraArgs);
     console.log('[4KHDHub] Resolved metadata: "' + meta.title + '" (' + meta.year + '), Lang: ' + meta.originalLanguage);
 
-    const epTag = !isMovie ?
+    var epTag = !isMovie ?
         ('S' + String(sNum).padStart(2, '0') + 'E' + String(eNum).padStart(2, '0')) :
         '';
 
     // Search 4khdhub for the catalog entry
-    const searchTitle = meta.title.replace(/[^\w\s]/g, ' ').replace(/\s+/g, ' ').trim();
-    const searchResults = await search4khdHub(searchTitle, isMovie);
+    var searchTitle = meta.title.replace(/[^\w\s]/g, ' ').replace(/\s+/g, ' ').trim();
+    var searchResults = await search4khdHub(searchTitle, isMovie);
     console.log('[4KHDHub] Search found ' + searchResults.length + ' candidates');
 
     if (searchResults.length === 0) {
         return [];
     }
 
-    const matching = searchResults.find(r => isMovie ? r.type === 'movie' : r.type === 'tv') || searchResults[0];
+    var matching = searchResults.find(function(r) { return isMovie ? r.type === 'movie' : r.type === 'tv'; }) || searchResults[0];
     console.log('[4KHDHub] Selected detail page: ' + matching.url);
 
-    const pageRes = await fetch(matching.url, {
-        headers: DEFAULT_HEADERS,
-        signal: AbortSignal.timeout(8000)
+    var pageRes = await fetch(matching.url, {
+        headers: DEFAULT_HEADERS
     });
     if (!pageRes.ok) return [];
-    const html = await pageRes.text();
+    var html = await pageRes.text();
 
-    const releases = [];
-    const epRegex = new RegExp('(?:S0*' + sNum + '\\s*E0*' + eNum + '|Episode[-_\\s]*0*' + eNum + ')\\b', 'i');
+    var releases = [];
+    var epRegex = new RegExp('(?:S0*' + sNum + '\\s*E0*' + eNum + '|Episode[-_\\s]*0*' + eNum + ')\\b', 'i');
 
     if (!isMovie) {
         // TV Series: parse individual episode blocks
-        const epSectionIdx = html.indexOf('id="episodes"');
-        const searchArea = epSectionIdx !== -1 ? html.slice(epSectionIdx) : html;
-        const blocks = searchArea.split('<div class="episode-download-item">');
+        var epSectionIdx = html.indexOf('id="episodes"');
+        var searchArea = epSectionIdx !== -1 ? html.slice(epSectionIdx) : html;
+        var blocks = searchArea.split('<div class="episode-download-item">');
 
-        for (let i = 1; i < blocks.length; i++) {
-            const block = blocks[i];
-            const titleMatch = block.match(/<div class="episode-file-title">([\s\S]*?)<\/div>/i);
-            const linkMatch = block.match(/href="(https:\/\/greenmotors\.[^"]+)"/i);
-            const title = titleMatch ? titleMatch[1].replace(/<[^>]+>/g, '').trim() : '';
-            const link = linkMatch ? linkMatch[1] : '';
+        for (var i = 1; i < blocks.length; i++) {
+            var block = blocks[i];
+            var titleMatch = block.match(/<div class="episode-file-title">([\s\S]*?)<\/div>/i);
+            var linkMatch = block.match(/href="(https:\/\/greenmotors\.[^"]+)"/i);
+            var title = titleMatch ? titleMatch[1].replace(/<[^>]+>/g, '').trim() : '';
+            var link = linkMatch ? linkMatch[1] : '';
 
             if (link && epRegex.test(title)) {
                 releases.push({
@@ -352,20 +380,20 @@ async function getStreams(tmdbId, mediaType, season, episode, extraArgs) {
         }
     } else {
         // Movies: parse file quality blocks
-        const blocks = html.split(/<div id="content-file\d+"/i);
-        for (let i = 1; i < blocks.length; i++) {
-            const block = blocks[i];
-            const titleMatch = block.match(/<div class="file-title">([\s\S]*?)<\/div>/i);
-            const linkMatch = block.match(/href="(https:\/\/greenmotors\.[^"]+)"/i);
-            const title = titleMatch ? titleMatch[1].replace(/<[^>]+>/g, '').trim() : '';
-            const link = linkMatch ? linkMatch[1] : '';
+        var mBlocks = html.split(/<div id="content-file\d+"/i);
+        for (var j = 1; j < mBlocks.length; j++) {
+            var mBlock = mBlocks[j];
+            var mTitleMatch = mBlock.match(/<div class="file-title">([\s\S]*?)<\/div>/i);
+            var mLinkMatch = mBlock.match(/href="(https:\/\/greenmotors\.[^"]+)"/i);
+            var mTitle = mTitleMatch ? mTitleMatch[1].replace(/<[^>]+>/g, '').trim() : '';
+            var mLink = mLinkMatch ? mLinkMatch[1] : '';
 
-            if (link) {
+            if (mLink) {
                 releases.push({
-                    rawTitle: title,
-                    quality: parseQualityFromText(title),
-                    audio: parseAudiosFromText(title),
-                    link: link
+                    rawTitle: mTitle,
+                    quality: parseQualityFromText(mTitle),
+                    audio: parseAudiosFromText(mTitle),
+                    link: mLink
                 });
             }
         }
@@ -374,38 +402,41 @@ async function getStreams(tmdbId, mediaType, season, episode, extraArgs) {
     console.log('[4KHDHub] Found ' + releases.length + ' matching release(s) on page');
     if (releases.length === 0) return [];
 
-    // Process up to 8 releases to ensure we cover 4K UHD, 1080p, and multi-host options
-    const selectedReleases = releases.slice(0, 8);
+    // Process up to 8 releases to cover all quality tiers and mirror hosts
+    var selectedReleases = releases.slice(0, 8);
 
     // Concurrently unpack greenmotors -> HubCloud -> direct servers
-    const tasks = selectedReleases.map(async (rel) => {
-        const hubUrl = await resolveGreenmotorsUrl(rel.link);
+    var tasks = selectedReleases.map(async function(rel) {
+        var hubUrl = await resolveGreenmotorsUrl(rel.link);
         if (!hubUrl) return [];
-        const servers = await resolveHubCloud(hubUrl);
-        return servers.map(srv => ({
-            release: rel,
-            server: srv
-        }));
+        var servers = await resolveHubCloud(hubUrl);
+        return servers.map(function(srv) {
+            return {
+                release: rel,
+                server: srv
+            };
+        });
     });
 
-    const settled = await Promise.all(tasks);
-    const flattened = settled.flat();
+    var settled = await Promise.all(tasks);
+    var flattened = settled.flat();
 
-    const streams = [];
-    const seenStreamKeys = new Set();
+    var streams = [];
+    var seenStreamKeys = {};
 
-    for (const item of flattened) {
-        const rel = item.release;
-        const srv = item.server;
-        const audio = rel.audio;
-        const quality = rel.quality;
+    for (var k = 0; k < flattened.length; k++) {
+        var item = flattened[k];
+        var rel = item.release;
+        var srv = item.server;
+        var audio = rel.audio;
+        var quality = rel.quality;
 
-        const dedupeKey = srv.url + '|' + quality;
-        if (seenStreamKeys.has(dedupeKey)) continue;
-        seenStreamKeys.add(dedupeKey);
+        var dedupeKey = srv.url + '|' + quality;
+        if (seenStreamKeys[dedupeKey]) continue;
+        seenStreamKeys[dedupeKey] = true;
 
-        let streamTitle;
-        let displayName;
+        var streamTitle;
+        var displayName;
 
         if (!isMovie) {
             // MatchScorer format for Series / Anime (+0.25 episode bonus)
@@ -422,7 +453,7 @@ async function getStreams(tmdbId, mediaType, season, episode, extraArgs) {
             title: streamTitle,
             url: srv.url,
             quality: quality,
-            type: srv.url.includes('.m3u8') ? 'm3u8' : 'mp4',
+            type: srv.url.indexOf('.m3u8') >= 0 ? 'm3u8' : 'mp4',
             provider: '4khdhub',
             language: audio.tag.toLowerCase(),
             headers: {
@@ -438,8 +469,8 @@ async function getStreams(tmdbId, mediaType, season, episode, extraArgs) {
 
 if (typeof module !== 'undefined' && module.exports) {
     module.exports = {
-        getStreams,
-        resolveMetadata
+        getStreams: getStreams,
+        resolveMetadata: resolveMetadata
     };
 }
 
