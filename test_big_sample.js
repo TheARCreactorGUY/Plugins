@@ -97,10 +97,14 @@ async function testSample(label, tmdbId, type, s, e) {
   console.log(`\n--- [4KHDHUB PLUGIN] ---`);
   const hubStreams = await hub.getStreams(tmdbId, type, s, e);
   console.log(`4KHDHub found ${hubStreams.length} stream(s):`);
-  for (const st of hubStreams) {
-    console.log(`  - ${st.name} => ${st.title} [${st.quality}]`);
-  }
+  const hServerNames = hubStreams.map(st => {
+    const m = st.name.match(/4KHDHub \| ([^•]+)/);
+    return m ? m[1].trim() : st.name;
+  });
+  console.log(`Servers discovered: ${[...new Set(hServerNames)].join(', ')}`);
+
   if (hubStreams.length > 0) {
+    console.log(`Sample title: "${hubStreams[0].title}"`);
     if (type !== 'movie') {
       const hasSe = /S\d{2}E\d{2}/.test(hubStreams[0].title);
       console.log(`* TV SxxExx marker present: ${hasSe ? 'YES ✓ (MatchScorer +0.25 Bonus)' : 'NO ✗'}`);
@@ -109,11 +113,17 @@ async function testSample(label, tmdbId, type, s, e) {
       console.log(`* Movie clean of TV markers: ${!hasSe ? 'YES ✓ (Clean Movie)' : 'NO ✗'}`);
     }
   }
+
+  for (const st of hubStreams.slice(0, 3)) {
+    const p = await checkPlayable(st);
+    console.log(`  - ${st.name} => ${p.ok ? 'PLAYABLE (HTTP ' + p.status + ')' : 'STATUS (' + (p.error || p.status) + ')'}`);
+  }
 }
 
 async function runAll() {
   await testSample('Movie: Fight Club', '550', 'movie');
   await testSample('Movie: Inception', '27205', 'movie');
+  await testSample('TV: MobLand S1E1', '243407', 'tv', 1, 1);
   await testSample('TV: Breaking Bad S1E1', '1396', 'tv', 1, 1);
   await testSample('Anime: Attack on Titan Ep 1', '1429', 'anime', 1, 1);
   console.log(`\n======================================================`);
