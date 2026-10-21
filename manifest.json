@@ -1,6 +1,6 @@
 {
   "name": "Community-Providers",
-  "version": "1.6.0",
+  "version": "1.7.0",
   "scrapers": [
     {
       "id": "movy",
@@ -60,7 +60,7 @@
       "id": "4khdhub",
       "name": "4KHDHub",
       "description": "Native high-speed direct stream provider for Movies, TV Shows, Webseries, and Anime aggregated from 4khdhub.one featuring FSL R2, 10Gbps Pixel Cloud, ZipDisk, and Pixeldrain servers with dynamic multi-audio support",
-      "version": "1.3.0",
+      "version": "1.4.0",
       "author": "Secondary Agent",
       "supportedTypes": [
         "movie",

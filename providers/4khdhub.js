@@ -111,10 +111,29 @@ function parseAudiosFromText(text) {
 function parseQualityFromText(text) {
     if (!text) return '1080p';
     var t = String(text);
-    if (/2160p|4k\b|uhd\b/i.test(t)) return '4K 2160p';
-    if (/1080p|fhd\b/i.test(t)) return '1080p';
-    if (/720p|hd\b/i.test(t)) return '720p';
-    if (/480p|sd\b/i.test(t)) return '480p';
+
+    // 1. Explicit 2160p is definitely 4K UHD
+    if (/2160p\b/i.test(t)) return '4K 2160p';
+
+    // 2. Explicit 1080p or 1080i is definitely 1080p (even if DS4K or 4K Remastered is in title)
+    if (/1080[pi]\b|fhd\b/i.test(t)) return '1080p';
+
+    // 3. Explicit 720p is definitely 720p
+    if (/720p\b/i.test(t)) return '720p';
+
+    // 4. Explicit 480p or 576p is definitely 480p
+    if (/(?:480|576)p\b|sd\b/i.test(t)) return '480p';
+
+    // 5. Clean string from site watermark (4khdhub), DS4K, 4K Remaster before standalone 4K check
+    var clean = t.replace(/\bds-?4k\b/gi, '')
+                 .replace(/\b4k[-_ ]?hdhub[a-z0-9.]*\b/gi, '')
+                 .replace(/4k[- ]?remaster(?:ed)?/gi, '')
+                 .replace(/4k[- ]?sdr/gi, '')
+                 .replace(/4k[- ]?hdr/gi, '');
+
+    if (/\b(?:4k|uhd)\b/i.test(clean)) return '4K 2160p';
+    if (/\b(?:hd)\b/i.test(clean)) return '720p';
+
     return '1080p';
 }
 
