@@ -56,10 +56,10 @@ var DEFAULT_HEADERS = {
 // Priority-ordered servers (HLS direct-stream first for maximum device compatibility)
 var SERVERS = [
     { id: "atlas", name: "Atlas", desc: "HLS CDN", format: "m3u8", defaultRes: "1080p", audioTag: "ENG", audioBadge: "[ENG]" },
+    { id: "ursa", name: "Ursa", desc: "Dual Audio HLS", format: "m3u8", defaultRes: "1080p", audioTag: "MULTI", audioBadge: "[MULTI] [DUAL-AUDIO]" },
     { id: "daedalus", name: "Daedalus", desc: "Adaptive HLS", format: "m3u8", defaultRes: "1080p", audioTag: "ENG", audioBadge: "[ENG]" },
-    { id: "andromeda", name: "Andromeda", desc: "Fast DASH", format: "mpd", defaultRes: "1080p", audioTag: "ENG", audioBadge: "[ENG]" },
     { id: "orion", name: "Orion", desc: "Multi Audio DASH", format: "mpd", defaultRes: "1080p", audioTag: "MULTI", audioBadge: "[MULTI] [DUAL-AUDIO]" },
-    { id: "ursa", name: "Ursa", desc: "Dual Audio HLS", format: "m3u8", defaultRes: "1080p", audioTag: "MULTI", audioBadge: "[MULTI] [DUAL-AUDIO]" }
+    { id: "andromeda", name: "Andromeda", desc: "Fast DASH", format: "mpd", defaultRes: "1080p", audioTag: "ENG", audioBadge: "[ENG]" }
 ];
 
 // In-memory cache to prevent 429 rate limit when user selects or replays streams
@@ -252,28 +252,28 @@ async function getStreams(tmdbId, mediaType, season, episode, extraArgs) {
         var subtitlesPromise = fetchSubtitles(tmdbId, mediaType, sNum, eNum, mediaTitle, releaseYear, releaseDate);
 
         // 2. Batched Server Queries (Staggered to prevent HTTP 429 rate limiting)
-        // Batch 1: Primary HLS CDN servers (Atlas, Daedalus)
+        // Batch 1: Proven HLS CDN servers (Atlas, Ursa)
         var batch1 = await Promise.all([
             fetchServerStream('atlas', tmdbId, mediaType, sNum, eNum, mediaTitle, releaseYear, releaseDate, imdbId),
-            fetchServerStream('daedalus', tmdbId, mediaType, sNum, eNum, mediaTitle, releaseYear, releaseDate, imdbId)
+            fetchServerStream('ursa', tmdbId, mediaType, sNum, eNum, mediaTitle, releaseYear, releaseDate, imdbId)
         ]);
 
         // Stagger 60ms between server batches to respect rate limits
         await sleep(60);
 
-        // Batch 2: Secondary servers (Andromeda, Orion, Ursa)
+        // Batch 2: Adaptive HLS & DASH servers (Daedalus, Orion, Andromeda)
         var batch2 = await Promise.all([
-            fetchServerStream('andromeda', tmdbId, mediaType, sNum, eNum, mediaTitle, releaseYear, releaseDate, imdbId),
+            fetchServerStream('daedalus', tmdbId, mediaType, sNum, eNum, mediaTitle, releaseYear, releaseDate, imdbId),
             fetchServerStream('orion', tmdbId, mediaType, sNum, eNum, mediaTitle, releaseYear, releaseDate, imdbId),
-            fetchServerStream('ursa', tmdbId, mediaType, sNum, eNum, mediaTitle, releaseYear, releaseDate, imdbId)
+            fetchServerStream('andromeda', tmdbId, mediaType, sNum, eNum, mediaTitle, releaseYear, releaseDate, imdbId)
         ]);
 
         var serverResults = [
             batch1[0], // atlas
-            batch1[1], // daedalus
-            batch2[0], // andromeda
+            batch1[1], // ursa
+            batch2[0], // daedalus
             batch2[1], // orion
-            batch2[2]  // ursa
+            batch2[2]  // andromeda
         ];
 
         var allSubtitles = await subtitlesPromise;
