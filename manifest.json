@@ -143,7 +143,7 @@
       "id": "freekz",
       "name": "Freekz",
       "description": "High-speed multi-server streaming provider for movies and TV shows powered by freekz.to featuring 5 CDN architectures (Orion, Andromeda, Atlas, Daedalus, Ursa) with full multi-audio dubs, DASH/HLS formats, and multi-language subtitles",
-      "version": "1.0.0",
+      "version": "1.1.0",
       "author": "Euthopiar Core Team",
       "supportedTypes": [
         "movie",
