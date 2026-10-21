@@ -1,6 +1,6 @@
 {
   "name": "Community-Providers",
-  "version": "1.9.0",
+  "version": "2.0.0",
   "scrapers": [
     {
       "id": "movy",
@@ -136,6 +136,37 @@
         "hi",
         "ta",
         "te",
+        "multi"
+      ]
+    },
+    {
+      "id": "freekz",
+      "name": "Freekz",
+      "description": "High-speed multi-server streaming provider for movies and TV shows powered by freekz.to featuring 5 CDN architectures (Orion, Andromeda, Atlas, Daedalus, Ursa) with full multi-audio dubs, DASH/HLS formats, and multi-language subtitles",
+      "version": "1.0.0",
+      "author": "Euthopiar Core Team",
+      "supportedTypes": [
+        "movie",
+        "tv"
+      ],
+      "filename": "providers/freekz.js",
+      "enabled": true,
+      "hasSettings": false,
+      "formats": [
+        "mpd",
+        "m3u8"
+      ],
+      "logo": "https://freekz.to/favicon.ico",
+      "contentLanguage": [
+        "en",
+        "hi",
+        "es",
+        "fr",
+        "pt",
+        "ru",
+        "ar",
+        "bn",
+        "tl",
         "multi"
       ]
     }
