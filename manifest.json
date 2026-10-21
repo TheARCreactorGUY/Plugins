@@ -1,6 +1,6 @@
 {
   "name": "Community-Providers",
-  "version": "1.8.0",
+  "version": "1.9.0",
   "scrapers": [
     {
       "id": "movy",
@@ -111,6 +111,31 @@
         "fr",
         "de",
         "ja",
+        "multi"
+      ]
+    },
+    {
+      "id": "uhdmovies",
+      "name": "UHDMovies",
+      "description": "Premier 4K UHD 2160p HDR, 1080p 10-bit HEVC, and 720p direct streaming provider powered by uhdmovies.us.org featuring Google Cloud CDN high-speed streaming with dynamic multi-audio and multi-season support",
+      "version": "1.0.0",
+      "author": "Secondary Agent",
+      "supportedTypes": [
+        "movie",
+        "tv"
+      ],
+      "filename": "providers/uhdmovies.js",
+      "enabled": true,
+      "hasSettings": false,
+      "formats": [
+        "mp4"
+      ],
+      "logo": "https://uhdmovies.us.org/favicon.ico",
+      "contentLanguage": [
+        "en",
+        "hi",
+        "ta",
+        "te",
         "multi"
       ]
     }
