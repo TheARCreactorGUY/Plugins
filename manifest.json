@@ -1,6 +1,6 @@
 {
   "name": "Community-Providers",
-  "version": "1.7.0",
+  "version": "1.8.0",
   "scrapers": [
     {
       "id": "movy",
@@ -81,6 +81,36 @@
         "ta",
         "te",
         "ko",
+        "multi"
+      ]
+    },
+    {
+      "id": "net77",
+      "name": "NetMirror (Net77)",
+      "description": "Multi-OTT streaming provider aggregating adaptive master HLS streams from Netflix, Amazon Prime Video, and Disney+ Hotstar with extensive multi-audio tracks and subtitles",
+      "version": "1.0.0",
+      "author": "Secondary Agent",
+      "supportedTypes": [
+        "movie",
+        "tv",
+        "anime"
+      ],
+      "filename": "providers/net77.js",
+      "enabled": true,
+      "hasSettings": false,
+      "formats": [
+        "m3u8"
+      ],
+      "logo": "https://net77.cc/favicon.ico",
+      "contentLanguage": [
+        "en",
+        "hi",
+        "ta",
+        "te",
+        "es",
+        "fr",
+        "de",
+        "ja",
         "multi"
       ]
     }
