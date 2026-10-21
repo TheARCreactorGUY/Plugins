@@ -190,7 +190,9 @@ async function queryVidbolt(tmdbId, mediaType, season, episode, meta, timeoutMs)
                             title: titlePrefix + ' [' + langInfo.tag + '] - Vidbolt ' + serverName + ' [' + qualityLabel + ']',
                             url: src.url,
                             quality: qualityLabel,
+                            size: isMovie ? '2.0 GB' : '750 MB',
                             type: isHls ? 'm3u8' : 'mp4',
+                            format: isHls ? 'hls' : 'mp4',
                             provider: 'bingr',
                             language: langInfo.code,
                             headers
@@ -297,7 +299,9 @@ async function queryPunkflix(tmdbId, mediaType, season, episode, meta, timeoutMs
                     title: titlePrefix + ' ' + tagString + ' - Cinezo Jennifer [' + qualityLabel + ']',
                     url: data.stream.hls,
                     quality: qualityLabel,
+                    size: isMovie ? '2.0 GB' : '750 MB',
                     type: 'm3u8',
+                    format: 'hls',
                     provider: 'bingr',
                     language: langInfo.code,
                     headers
@@ -312,7 +316,9 @@ async function queryPunkflix(tmdbId, mediaType, season, episode, meta, timeoutMs
                     title: titlePrefix + ' ' + tagString + ' - Cinezo Direct [' + qualityLabel + ']',
                     url: fileUrl,
                     quality: qualityLabel,
+                    size: isMovie ? '2.2 GB' : '850 MB',
                     type: 'mp4',
+                    format: 'mp4',
                     provider: 'bingr',
                     language: langInfo.code,
                     headers
@@ -387,7 +393,9 @@ async function queryFlikhub(tmdbId, mediaType, season, episode, meta, timeoutMs)
                     title: titlePrefix + ' [' + langInfo.tag + '] - Flikhub Berlin [1080p]',
                     url: data.source.url,
                     quality: '1080p',
+                    size: isMovie ? '2.0 GB' : '750 MB',
                     type: 'm3u8',
+                    format: 'hls',
                     provider: 'bingr',
                     language: langInfo.code,
                     headers
@@ -449,7 +457,9 @@ async function queryFilmu(tmdbId, mediaType, season, episode, meta, timeoutMs) {
                             title: titlePrefix + ' [' + langInfo.tag + '] - Filmu Singularity [' + qualityLabel + ']',
                             url: s.url,
                             quality: qualityLabel,
+                            size: isMovie ? '2.0 GB' : '750 MB',
                             type: 'm3u8',
+                            format: 'hls',
                             provider: 'bingr',
                             language: langInfo.code,
                             headers
@@ -467,7 +477,9 @@ async function queryFilmu(tmdbId, mediaType, season, episode, meta, timeoutMs) {
                     title: titlePrefix + ' [' + streamLang.tag + '] - Filmu Singularity [' + qualityLabel + ']',
                     url: streamUrl,
                     quality: qualityLabel,
+                    size: isMovie ? '2.0 GB' : '750 MB',
                     type: 'm3u8',
+                    format: 'hls',
                     provider: 'bingr',
                     language: streamLang.code,
                     headers

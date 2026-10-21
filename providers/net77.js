@@ -374,7 +374,9 @@ async function searchAndResolveOtt(ott, meta, isMovie, season, episode, cookie) 
             title: streamTitle,
             url: pJson.video_link,
             quality: playlistInfo.quality,
+            size: isMovie ? '2.5 GB' : '900 MB',
             type: 'm3u8',
+            format: 'hls',
             provider: 'net77',
             language: playlistInfo.primaryTag,
             headers: {

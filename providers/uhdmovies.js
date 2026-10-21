@@ -372,10 +372,15 @@ function extractMovieLinks(html, postTitle) {
         var quality = parseQuality(context);
         var audio = parseAudio(combined);
 
+        var sizeMatch = context.match(/\[\s*([0-9.]+\s*[MG]B)\s*\]/i) ||
+                        context.match(/(\d+(?:\.\d+)?\s*(?:GB|MB))/i);
+        var sizeStr = sizeMatch ? sizeMatch[1].trim() : '2.5 GB';
+
         candidates.push({
             url: linkUrl,
             quality: quality,
-            audio: audio
+            audio: audio,
+            size: sizeStr
         });
     }
 
@@ -448,10 +453,15 @@ function extractTvLinks(fullHtml, seasonNum, episodeNum, postTitle) {
             var quality = parseQuality(context);
             var audio = parseAudio(combined);
 
+            var sizeMatch = context.match(/\[\s*([0-9.]+\s*[MG]B(?:\/E)?)\s*\]/i) ||
+                            context.match(/(\d+(?:\.\d+)?\s*(?:GB|MB))/i);
+            var sizeStr = sizeMatch ? sizeMatch[1].replace(/\/E/i, '').trim() : '1.2 GB';
+
             candidates.push({
                 url: linkUrl,
                 quality: quality,
-                audio: audio
+                audio: audio,
+                size: sizeStr
             });
         }
     }
@@ -531,10 +541,11 @@ async function getStreams(tmdbId, mediaType, season, episode, extraArgs) {
                     title: streamTitle,
                     url: streamUrl,
                     quality: c.quality,
+                    size: c.size || (isMovie ? '2.5 GB' : '1.2 GB'),
+                    type: 'mp4',
                     format: 'mp4',
                     headers: {
-                        'User-Agent': USER_AGENT,
-                        'Referer': 'https://video-seed.dev/'
+                        'User-Agent': USER_AGENT
                     }
                 };
             } catch (err) {

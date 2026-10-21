@@ -182,6 +182,28 @@ async function resolveGreenmotorsUrl(gmUrl) {
     }
 }
 
+async function resolvePixelCloud(pixelUrl) {
+    try {
+        var resp = await fetch(pixelUrl, {
+            headers: {
+                'User-Agent': DEFAULT_HEADERS['User-Agent'],
+                'Referer': 'https://greenmotors.cc/'
+            }
+        });
+        var finalUrl = resp.url || '';
+        if (finalUrl.indexOf('?link=') >= 0) {
+            return decodeURIComponent(finalUrl.split('?link=')[1]);
+        }
+        if (finalUrl.indexOf('googleusercontent.com') >= 0) {
+            return finalUrl;
+        }
+        var text = await resp.text();
+        var m = text.match(/href=['"](https:\/\/video-downloads\.googleusercontent\.com\/[^'"]+)['"]/i);
+        if (m) return m[1];
+    } catch (e) {}
+    return pixelUrl;
+}
+
 async function resolveHubCloud(hubUrl) {
     try {
         var res = await fetch(hubUrl, {
@@ -223,25 +245,40 @@ async function resolveHubCloud(hubUrl) {
                 servers.push({
                     serverName: 'FSL R2',
                     displayName: 'FSL R2 Server',
-                    url: href
+                    url: href,
+                    headers: {
+                        'User-Agent': DEFAULT_HEADERS['User-Agent']
+                    }
                 });
             } else if (label.indexOf('10Gbps') >= 0 || href.indexOf('pixel.hubcloud.ist') >= 0 || href.indexOf('gpdl.hubcloud.ist') >= 0) {
+                var directPixel = await resolvePixelCloud(href);
                 servers.push({
                     serverName: 'Pixel Cloud',
                     displayName: 'Server : 10Gbps (Pixel Cloud)',
-                    url: href
+                    url: directPixel,
+                    headers: {
+                        'User-Agent': DEFAULT_HEADERS['User-Agent']
+                    }
                 });
             } else if (label.indexOf('PixelServer') >= 0 || href.indexOf('pixeldrain') >= 0) {
+                var directPixeldrain = href.replace(/\/u\/([a-zA-Z0-9_-]+)/, '/api/file/$1');
                 servers.push({
                     serverName: 'Pixeldrain',
                     displayName: 'Pixeldrain Server',
-                    url: href
+                    url: directPixeldrain,
+                    headers: {
+                        'User-Agent': DEFAULT_HEADERS['User-Agent'],
+                        'Referer': 'https://pixeldrain.com/'
+                    }
                 });
             } else if (label.indexOf('ZipDisk') >= 0 || href.indexOf('workers.dev') >= 0) {
                 servers.push({
                     serverName: 'ZipDisk',
                     displayName: 'ZipDisk Server',
-                    url: href
+                    url: href,
+                    headers: {
+                        'User-Agent': DEFAULT_HEADERS['User-Agent']
+                    }
                 });
             }
         }
@@ -460,17 +497,22 @@ async function getStreams(tmdbId, mediaType, season, episode, extraArgs) {
             displayName = '4KHDHub | ' + srv.displayName + ' • ' + audio.badge + ' (' + quality + ')';
         }
 
+        var sizeMatch = rel.rawTitle.match(/\[\s*([0-9.]+\s*[MG]B)\s*\]/i) ||
+                        rel.rawTitle.match(/(\d+(?:\.\d+)?\s*(?:GB|MB))/i);
+        var parsedSize = sizeMatch ? sizeMatch[1].trim() : (isMovie ? '2.5 GB' : '950 MB');
+
         streams.push({
             name: displayName,
             title: streamTitle,
             url: srv.url,
             quality: quality,
+            size: parsedSize,
             type: srv.url.indexOf('.m3u8') >= 0 ? 'm3u8' : 'mp4',
+            format: srv.url.indexOf('.m3u8') >= 0 ? 'hls' : 'mp4',
             provider: '4khdhub',
             language: audio.tag.toLowerCase(),
-            headers: {
-                'User-Agent': DEFAULT_HEADERS['User-Agent'],
-                'Referer': 'https://greenmotors.cc/'
+            headers: srv.headers || {
+                'User-Agent': DEFAULT_HEADERS['User-Agent']
             }
         });
     }
