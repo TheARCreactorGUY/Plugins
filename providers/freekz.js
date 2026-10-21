@@ -289,10 +289,21 @@ async function getStreams(tmdbId, mediaType, season, episode, extraArgs) {
                 var rawDecrypted = decryptLink(linkObj.link);
                 if (!rawDecrypted) continue;
 
+                // Filter out defunct / unresolvable hosts (e.g. zxcstream.xyz which fails DNS resolution)
+                if (rawDecrypted.indexOf('zxcstream.xyz') >= 0) continue;
+
                 var finalUrl = rawDecrypted.startsWith('/') ? BACKEND_URL + rawDecrypted : rawDecrypted;
 
-                // Determine container type & inject extension for ExoPlayer dispatch
+                // Determine container type dynamically
                 var formatType = server.format;
+                if (linkObj.type === 'dash' || finalUrl.indexOf('/database/andromeda') >= 0 || finalUrl.indexOf('.mpd') >= 0) {
+                    formatType = 'mpd';
+                } else if (linkObj.type === 'hls' || finalUrl.indexOf('.m3u8') >= 0) {
+                    formatType = 'm3u8';
+                } else if (linkObj.type === 'mp4' || finalUrl.indexOf('.mp4') >= 0) {
+                    formatType = 'mp4';
+                }
+
                 if (formatType === 'mpd') {
                     // MPEG-DASH manifest
                     if (finalUrl.indexOf('.mpd') < 0) {
@@ -319,15 +330,26 @@ async function getStreams(tmdbId, mediaType, season, episode, extraArgs) {
                     serverDisplayName = server.name + ' (' + quality + ')';
                 }
 
+                var audioTag = server.audioTag;
+                var audioBadge = server.audioBadge;
+                if (server.id === 'orion' && data.dubs && data.dubs.length > 0) {
+                    var dubLanguages = data.dubs
+                        .filter(function(d) { return d.type === 0 && d.lanCode; })
+                        .map(function(d) { return d.lanCode.toUpperCase(); });
+                    if (dubLanguages.length > 1) {
+                        audioBadge = '[MULTI: ' + dubLanguages.slice(0, 5).join('/') + ']';
+                    }
+                }
+
                 collectedItems.push({
                     serverId: server.id,
                     serverName: serverDisplayName,
                     url: finalUrl,
                     quality: quality,
                     type: formatType,
-                    format: formatType === 'mpd' ? 'dash' : 'hls',
-                    audioTag: server.audioTag,
-                    audioBadge: server.audioBadge
+                    format: formatType === 'mpd' ? 'dash' : (formatType === 'm3u8' ? 'hls' : 'mp4'),
+                    audioTag: audioTag,
+                    audioBadge: audioBadge
                 });
             }
         }
