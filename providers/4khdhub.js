@@ -9,7 +9,6 @@
  *  - 4KHDHub | Server : 10Gbps (Pixel Cloud / Google User Content)
  *  - 4KHDHub | ZipDisk Server (Cloudflare Edge Direct Stream)
  *  - 4KHDHub | Pixeldrain Server (Direct Stream CDN)
- *  - 4KHDHub | FSL Direct / Buzz Server (High-Speed Direct Stream)
  *
  * Compatible with Android QuickJS runtime (pure atob, no Node.js Buffer, no AbortSignal.timeout).
  * Formatted specifically for MatchScorer.kt:
@@ -223,12 +222,6 @@ async function resolveHubCloud(hubUrl) {
                 servers.push({
                     serverName: 'ZipDisk',
                     displayName: 'ZipDisk Server',
-                    url: href
-                });
-            } else if (label.indexOf('Buzz Server') >= 0 || href.indexOf('fuckingfast') >= 0) {
-                servers.push({
-                    serverName: 'FSL Direct / Buzz',
-                    displayName: 'FSL Direct / Buzz Server',
                     url: href
                 });
             }
