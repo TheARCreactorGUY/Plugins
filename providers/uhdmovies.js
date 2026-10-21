@@ -384,19 +384,19 @@ function extractMovieLinks(html, postTitle) {
         });
     }
 
-    var byQuality = {};
+    var uniqueCandidates = [];
+    var seenUrls = {};
     for (var i = 0; i < candidates.length; i++) {
         var c = candidates[i];
-        if (!byQuality[c.quality]) {
-            byQuality[c.quality] = c;
+        if (!seenUrls[c.url]) {
+            seenUrls[c.url] = true;
+            uniqueCandidates.push(c);
         }
     }
-
-    var results = [];
-    for (var q in byQuality) {
-        results.push(byQuality[q]);
-    }
-    return results;
+    uniqueCandidates.sort(function(a, b) {
+        return (QUALITY_WEIGHTS[b.quality] || 0) - (QUALITY_WEIGHTS[a.quality] || 0);
+    });
+    return uniqueCandidates.slice(0, 6);
 }
 
 /**
@@ -466,19 +466,19 @@ function extractTvLinks(fullHtml, seasonNum, episodeNum, postTitle) {
         }
     }
 
-    var byQuality = {};
+    var uniqueTv = [];
+    var seenTvUrls = {};
     for (var i = 0; i < candidates.length; i++) {
         var c = candidates[i];
-        if (!byQuality[c.quality]) {
-            byQuality[c.quality] = c;
+        if (!seenTvUrls[c.url]) {
+            seenTvUrls[c.url] = true;
+            uniqueTv.push(c);
         }
     }
-
-    var results = [];
-    for (var q in byQuality) {
-        results.push(byQuality[q]);
-    }
-    return results;
+    uniqueTv.sort(function(a, b) {
+        return (QUALITY_WEIGHTS[b.quality] || 0) - (QUALITY_WEIGHTS[a.quality] || 0);
+    });
+    return uniqueTv.slice(0, 6);
 }
 
 /**
@@ -533,17 +533,20 @@ async function getStreams(tmdbId, mediaType, season, episode, extraArgs) {
 
                 // Build title strictly formatted for MatchScorer.kt
                 var streamTitle = isMovie ?
-                    meta.title + (meta.year ? ' (' + meta.year + ')' : '') + ' ' + c.quality + ' ' + c.audio + ' [UHDMovies]' :
-                    meta.title + ' S' + pad(sNum, 2) + 'E' + pad(eNum, 2) + ' ' + c.quality + ' ' + c.audio + ' [UHDMovies]';
+                    meta.title + (meta.year ? ' (' + meta.year + ')' : '') + ' ' + c.audio + ' - UHDMovies [' + c.quality + ']' :
+                    meta.title + ' S' + pad(sNum, 2) + 'E' + pad(eNum, 2) + ' ' + c.audio + ' - UHDMovies [' + c.quality + ']';
+
+                var serverName = 'UHDMovies | Google CDN • ' + c.audio + ' (' + c.quality + ')';
 
                 return {
-                    name: 'UHDMovies - Google Cloud CDN',
+                    name: serverName,
                     title: streamTitle,
                     url: streamUrl,
                     quality: c.quality,
                     size: c.size || (isMovie ? '2.5 GB' : '1.2 GB'),
                     type: 'mp4',
                     format: 'mp4',
+                    provider: 'uhdmovies',
                     headers: {
                         'User-Agent': USER_AGENT
                     }

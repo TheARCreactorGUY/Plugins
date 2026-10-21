@@ -233,6 +233,27 @@ async function resolveHubCloud(hubUrl) {
 
         var servers = [];
         var seenUrls = {};
+
+        // 1. Dynamic Pixeldrain extraction (bypasses anti-DMCA decoy link negn6f)
+        var pxlMatch = gText.match(/var\s+pxl\s*=\s*['"](https?:\/\/[^'"]*\/u\/([a-zA-Z0-9_-]+))['"]/i) ||
+                       gText.match(/var\s+pxl\s*=\s*['"](https?:\/\/[^'"]*pixeldrain[^'"]*)['"]/i);
+        if (pxlMatch) {
+            var rawPxl = pxlMatch[1];
+            var pxlDirect = rawPxl.replace(/\/u\/([a-zA-Z0-9_-]+)/, '/api/file/$1')
+                                  .replace('pixeldrain.dev', 'pixeldrain.com');
+            servers.push({
+                serverName: 'Pixeldrain',
+                displayName: 'Pixeldrain Server',
+                url: pxlDirect,
+                priority: 2,
+                headers: {
+                    'User-Agent': DEFAULT_HEADERS['User-Agent']
+                }
+            });
+            seenUrls[rawPxl] = true;
+            seenUrls[pxlDirect] = true;
+        }
+
         var aRegex = /<a[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi;
         var match;
         while ((match = aRegex.exec(gText)) !== null) {
@@ -246,6 +267,30 @@ async function resolveHubCloud(hubUrl) {
                     serverName: 'FSL R2',
                     displayName: 'FSL R2 Server',
                     url: href,
+                    priority: 1,
+                    headers: {
+                        'User-Agent': DEFAULT_HEADERS['User-Agent']
+                    }
+                });
+            } else if (label.indexOf('PixelServer') >= 0 || href.indexOf('pixeldrain') >= 0) {
+                if (href.indexOf('negn6f') >= 0) continue;
+                var directPixeldrain = href.replace(/\/u\/([a-zA-Z0-9_-]+)/, '/api/file/$1')
+                                           .replace('pixeldrain.dev', 'pixeldrain.com');
+                servers.push({
+                    serverName: 'Pixeldrain',
+                    displayName: 'Pixeldrain Server',
+                    url: directPixeldrain,
+                    priority: 2,
+                    headers: {
+                        'User-Agent': DEFAULT_HEADERS['User-Agent']
+                    }
+                });
+            } else if (label.indexOf('ZipDisk') >= 0 || href.indexOf('workers.dev') >= 0) {
+                servers.push({
+                    serverName: 'ZipDisk',
+                    displayName: 'ZipDisk Server',
+                    url: href,
+                    priority: 3,
                     headers: {
                         'User-Agent': DEFAULT_HEADERS['User-Agent']
                     }
@@ -254,28 +299,9 @@ async function resolveHubCloud(hubUrl) {
                 var directPixel = await resolvePixelCloud(href);
                 servers.push({
                     serverName: 'Pixel Cloud',
-                    displayName: 'Server : 10Gbps (Pixel Cloud)',
+                    displayName: 'Pixel Cloud (Google CDN)',
                     url: directPixel,
-                    headers: {
-                        'User-Agent': DEFAULT_HEADERS['User-Agent']
-                    }
-                });
-            } else if (label.indexOf('PixelServer') >= 0 || href.indexOf('pixeldrain') >= 0) {
-                var directPixeldrain = href.replace(/\/u\/([a-zA-Z0-9_-]+)/, '/api/file/$1');
-                servers.push({
-                    serverName: 'Pixeldrain',
-                    displayName: 'Pixeldrain Server',
-                    url: directPixeldrain,
-                    headers: {
-                        'User-Agent': DEFAULT_HEADERS['User-Agent'],
-                        'Referer': 'https://pixeldrain.com/'
-                    }
-                });
-            } else if (label.indexOf('ZipDisk') >= 0 || href.indexOf('workers.dev') >= 0) {
-                servers.push({
-                    serverName: 'ZipDisk',
-                    displayName: 'ZipDisk Server',
-                    url: href,
+                    priority: 4,
                     headers: {
                         'User-Agent': DEFAULT_HEADERS['User-Agent']
                     }
@@ -507,6 +533,7 @@ async function getStreams(tmdbId, mediaType, season, episode, extraArgs) {
             url: srv.url,
             quality: quality,
             size: parsedSize,
+            priority: srv.priority || 99,
             type: srv.url.indexOf('.m3u8') >= 0 ? 'm3u8' : 'mp4',
             format: srv.url.indexOf('.m3u8') >= 0 ? 'hls' : 'mp4',
             provider: '4khdhub',
@@ -516,6 +543,14 @@ async function getStreams(tmdbId, mediaType, season, episode, extraArgs) {
             }
         });
     }
+
+    streams.sort(function(a, b) {
+        var prioA = a.priority || 99;
+        var prioB = b.priority || 99;
+        if (prioA !== prioB) return prioA - prioB;
+        var qWeight = { '4K 2160p': 4, '1080p': 3, '720p': 2, '480p': 1 };
+        return (qWeight[b.quality] || 0) - (qWeight[a.quality] || 0);
+    });
 
     console.log('[4KHDHub] Discovered ' + streams.length + ' direct stream(s)');
     return streams;
