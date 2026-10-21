@@ -8,10 +8,11 @@
  *  - Disney+ Hotstar (hs)
  *
  * Features:
- *  - Dynamic NewTV API endpoint resolution via mobiledetects network.
- *  - Automatic 72-hour session handshake bypassing Cloudflare Turnstile barriers.
+ *  - Dynamic NewTV API endpoint resolution via mobiledetects network with automatic fallback.
+ *  - Automatic 72-hour session handshake bypassing Cloudflare Turnstile barriers with self-healing retry.
  *  - Adaptive HLS Master Playlist (.m3u8) streaming with up to 22 multi-audio tracks.
  *  - Complete WebVTT subtitle extraction across over 30 languages.
+ *  - Paginated episode discovery supporting arbitrary season and episode depths (>10 episodes).
  *  - Fully compatible with Android QuickJS runtime (no Buffer, no AbortSignal.timeout).
  *  - Formatted strictly for MatchScorer.kt (+0.25 SxxExx episode bonus for TV, clean (Year) for movies).
  */
@@ -38,6 +39,16 @@ var OTT_PLATFORMS = [
     { id: 'hs', name: 'Hotstar' }
 ];
 
+var API_DISCOVERY_HOSTS = [
+    'https://mobiledetects.com',
+    'https://mobiledetect.app',
+    'https://mobidetect.art',
+    'https://mobidetect.cc',
+    'https://mobidetect.live',
+    'https://mobidetect.vip',
+    'https://mobidetect.xyz'
+];
+
 var cachedCookie = null;
 var cachedCookieExpiry = 0;
 var cachedApiBase = DEFAULT_API_BASE;
@@ -51,10 +62,37 @@ function generateUUID() {
 }
 
 /**
+ * Discovers current live NewTV API base if DEFAULT_API_BASE fails.
+ */
+async function refreshApiBase() {
+    for (var i = 0; i < API_DISCOVERY_HOSTS.length; i++) {
+        try {
+            var dUrl = API_DISCOVERY_HOSTS[i] + '/checknewtv.php';
+            var res = await fetch(dUrl, {
+                headers: {
+                    'X-Requested-With': 'NetmirrorNewTV v1.0',
+                    'User-Agent': DEFAULT_HEADERS['User-Agent'],
+                    'Accept': 'application/json'
+                }
+            });
+            if (res.ok) {
+                var json = await res.json();
+                if (json.token_hash && typeof atob === 'function') {
+                    cachedApiBase = atob(json.token_hash).replace(/\/+$/, '');
+                    console.log('[Net77] Refreshed active API base: ' + cachedApiBase);
+                    return cachedApiBase;
+                }
+            }
+        } catch (e) {}
+    }
+    return cachedApiBase;
+}
+
+/**
  * Performs a session handshake with net52.cc to obtain a valid 3-day t_hash_t cookie.
  */
-async function getSessionCookie() {
-    if (cachedCookie && Date.now() < cachedCookieExpiry) {
+async function getSessionCookie(forceRefresh) {
+    if (!forceRefresh && cachedCookie && Date.now() < cachedCookieExpiry) {
         return cachedCookie;
     }
 
@@ -208,7 +246,14 @@ async function searchAndResolveOtt(ott, meta, isMovie, season, episode, cookie) 
 
     try {
         var sRes = await fetch(searchUrl, { headers: headers });
-        if (!sRes.ok) return null;
+        if (!sRes.ok) {
+            // Check if API base changed
+            await refreshApiBase();
+            searchUrl = cachedApiBase + '/newtv/search.php?s=' + encodeURIComponent(cleanTitle);
+            sRes = await fetch(searchUrl, { headers: headers });
+            if (!sRes.ok) return null;
+        }
+
         var sJson = await sRes.json();
         var results = sJson.searchResult || [];
         if (results.length === 0) return null;
@@ -221,7 +266,7 @@ async function searchAndResolveOtt(ott, meta, isMovie, season, episode, cookie) 
             var matchedMovie = results.find(function(r) { return (r.t || '').toLowerCase() === lowerTitle; }) || results[0];
             playId = matchedMovie.id;
         } else {
-            // For series, inspect top results to find season and episode
+            // For series, inspect candidate results to find seasons & episodes
             var candidates = results.slice(0, 3);
             for (var c = 0; c < candidates.length; c++) {
                 var cand = candidates[c];
@@ -241,17 +286,31 @@ async function searchAndResolveOtt(ott, meta, isMovie, season, episode, cookie) 
                 if (!targetSeason && seasons.length > 0) targetSeason = seasons[0];
                 if (!targetSeason || !targetSeason.id) continue;
 
-                // Fetch season episodes
-                var epUrl = cachedApiBase + '/newtv/episodes.php?id=' + targetSeason.id + '&page=1';
+                // Determine target pagination (NetMirror serves 10 episodes per page)
+                var targetPage = Math.max(1, Math.floor((episode - 1) / 10) + 1);
+                var epUrl = cachedApiBase + '/newtv/episodes.php?id=' + targetSeason.id + '&page=' + targetPage;
                 var epRes = await fetch(epUrl, { headers: headers });
-                if (!epRes.ok) continue;
-                var epJson = await epRes.json();
-
+                var epJson = epRes.ok ? await epRes.json() : {};
                 var epList = epJson.episodes || [];
+
                 var matchedEp = epList.find(function(e) {
                     var epNum = Number(String(e.ep || '').replace(/\D/g, ''));
                     return epNum === episode;
-                }) || epList[episode - 1];
+                });
+
+                // Fallback to page 1 if not found on calculated targetPage
+                if (!matchedEp && targetPage !== 1) {
+                    var p1Url = cachedApiBase + '/newtv/episodes.php?id=' + targetSeason.id + '&page=1';
+                    var p1Res = await fetch(p1Url, { headers: headers });
+                    if (p1Res.ok) {
+                        var p1Json = await p1Res.json();
+                        var p1List = p1Json.episodes || [];
+                        matchedEp = p1List.find(function(e) {
+                            var epNum = Number(String(e.ep || '').replace(/\D/g, ''));
+                            return epNum === episode;
+                        });
+                    }
+                }
 
                 if (matchedEp && matchedEp.id) {
                     playId = matchedEp.id;
@@ -267,6 +326,21 @@ async function searchAndResolveOtt(ott, meta, isMovie, season, episode, cookie) 
         var pRes = await fetch(playerUrl, { headers: headers });
         if (!pRes.ok) return null;
         var pJson = await pRes.json();
+
+        // Self-healing: if session expired or rejected, refresh cookie and retry once
+        if (pJson.status !== 'ok' || !pJson.video_link) {
+            console.log('[Net77] Status "' + pJson.status + '", refreshing session cookie...');
+            var freshCookie = await getSessionCookie(true);
+            if (freshCookie) {
+                var freshRaw = decodeURIComponent(freshCookie.replace(/^t_hash_t=/, ''));
+                headers['Cookie'] = freshCookie;
+                headers['Usertoken'] = freshRaw;
+                pRes = await fetch(playerUrl, { headers: headers });
+                if (pRes.ok) {
+                    pJson = await pRes.json();
+                }
+            }
+        }
 
         if (pJson.status !== 'ok' || !pJson.video_link) return null;
 
