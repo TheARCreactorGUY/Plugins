@@ -76,10 +76,14 @@ function cleanTitle(t) {
 function parseQualityFromText(text) {
     if (!text) return null;
     var t = String(text);
+    // Explicit resolutions first
     if (/\b(2160p|4k\b|uhd\b)/i.test(t)) return '4K 2160p';
     if (/\b(1080[pi]\b|fhd\b)/i.test(t)) return '1080p';
-    if (/\b(720p\b|hd\b)/i.test(t)) return '720p';
-    if (/\b(480p\b|540p\b|360p\b|sd\b)/i.test(t)) return '480p';
+    if (/\b(720p\b)/i.test(t)) return '720p';
+    if (/\b(480p\b|540p\b|360p\b)/i.test(t)) return '480p';
+    // Fallback general tags only if no explicit noise
+    if (/\b(hd)\b/i.test(t) && !/hdrip|webrip|hdts|hdtc/i.test(t)) return '720p';
+    if (/\b(sd)\b/i.test(t)) return '480p';
     return null;
 }
 
@@ -88,12 +92,13 @@ function extractQualityFromContext(html, linkIndex, label) {
     var q = parseQualityFromText(label);
     if (q) return q;
 
-    // 2. Preceding HTML context (check nearest resolution tag in previous 400 characters)
-    var sliceBefore = html.substring(Math.max(0, linkIndex - 400), linkIndex);
+    // 2. Preceding HTML context (check nearest resolution tag in previous 500 characters)
+    var sliceBefore = html.substring(Math.max(0, linkIndex - 500), linkIndex);
+    var cleanSlice = sliceBefore.replace(/hdrip|webrip|bluray|hdts|hdtc/gi, ' ');
     var matches = [];
-    var qRegex = /\b(2160p|4k\b|uhd\b|1080[pi]\b|fhd\b|720p\b|hd\b|540p\b|480p\b|360p\b|sd\b)/gi;
+    var qRegex = /\b(2160p|4k\b|uhd\b|1080[pi]\b|fhd\b|720p\b|540p\b|480p\b|360p\b)/gi;
     var qm;
-    while ((qm = qRegex.exec(sliceBefore)) !== null) {
+    while ((qm = qRegex.exec(cleanSlice)) !== null) {
         matches.push(qm[1]);
     }
     if (matches.length > 0) {
@@ -102,15 +107,14 @@ function extractQualityFromContext(html, linkIndex, label) {
         if (found) return found;
     }
 
-    // 3. Following HTML context (check next 250 characters)
-    var sliceAfter = html.substring(linkIndex, Math.min(html.length, linkIndex + 250));
-    var afterMatches = sliceAfter.match(/\b(2160p|4k\b|uhd\b|1080[pi]\b|fhd\b|720p\b|hd\b|540p\b|480p\b|360p\b|sd\b)/i);
-    if (afterMatches) {
-        var foundAfter = parseQualityFromText(afterMatches[1]);
-        if (foundAfter) return foundAfter;
+    // 3. Fallback to general tags in cleanSlice
+    var generalMatch = cleanSlice.match(/\b(hd|sd)\b/i);
+    if (generalMatch) {
+        var gFound = parseQualityFromText(generalMatch[1]);
+        if (gFound) return gFound;
     }
 
-    return '1080p';
+    return null;
 }
 
 function parseAudiosFromText(text) {
@@ -370,13 +374,23 @@ async function resolveFastDlOne(fastDlUrl) {
  */
 async function resolveNexdrive(nexdriveUrl, isMovie, seasonNum, episodeNum) {
     try {
-        var res = await safeFetch(nexdriveUrl, {
-            headers: {
-                'User-Agent': DEFAULT_HEADERS['User-Agent'],
-                'Referer': BASE_URL + '/'
-            }
-        }, 8000);
-        var html = await res.text();
+        var html = '';
+        if (typeof Browser !== 'undefined' && Browser.resolve) {
+            try {
+                var bRes = await Browser.resolve(nexdriveUrl);
+                if (bRes && bRes.html) html = bRes.html;
+            } catch (_) {}
+        }
+        if (!html) {
+            var res = await safeFetch(nexdriveUrl, {
+                headers: {
+                    'User-Agent': DEFAULT_HEADERS['User-Agent'],
+                    'Referer': BASE_URL + '/'
+                }
+            }, 8000);
+            if (res.ok) html = await res.text();
+        }
+        if (!html) return null;
 
         var pageTitleMatch = html.match(/<title>([\s\S]*?)<\/title>/i) || html.match(/<h1[^>]*>([\s\S]*?)<\/h1>/i);
         var nexQuality = null;
@@ -416,7 +430,7 @@ async function resolveNexdrive(nexdriveUrl, isMovie, seasonNum, episodeNum) {
 }
 
 /**
- * Searches Vegamovies across active mirrors.
+ * Searches Vegamovies across active mirrors using DLE POST search.
  */
 async function searchVegamovies(query) {
     var searchBases = [BASE_URL].concat(BACKUP_URLS);
@@ -428,16 +442,43 @@ async function searchVegamovies(query) {
         seenBases[currentBase] = true;
 
         try {
-            var searchUrl = currentBase + '/?s=' + encodeURIComponent(query);
-            var res = await safeFetch(searchUrl, {
+            // 1. DataLife Engine (DLE) POST search
+            var html = '';
+            var postRes = await safeFetch(currentBase + '/index.php?do=search', {
+                method: 'POST',
                 headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded',
                     'User-Agent': DEFAULT_HEADERS['User-Agent'],
                     'Referer': currentBase + '/'
-                }
-            }, 7000);
-            if (!res.ok) continue;
+                },
+                body: 'do=search&subaction=search&story=' + encodeURIComponent(query)
+            }, 8000);
 
-            var html = await res.text();
+            if (postRes.ok) {
+                html = await postRes.text();
+            }
+
+            // 2. Fallback to GET /?s= if POST produced no articles
+            if (!html || html.indexOf('<article') === -1) {
+                var getRes = await safeFetch(currentBase + '/?s=' + encodeURIComponent(query), {
+                    headers: {
+                        'User-Agent': DEFAULT_HEADERS['User-Agent'],
+                        'Referer': currentBase + '/'
+                    }
+                }, 7000);
+                if (getRes.ok) html = await getRes.text();
+            }
+
+            // 3. Fallback to Browser.resolve if bot-protected by Cloudflare
+            if (!html || html.indexOf('<article') === -1) {
+                if (typeof Browser !== 'undefined' && Browser.resolve) {
+                    try {
+                        var bRes = await Browser.resolve(currentBase + '/?s=' + encodeURIComponent(query));
+                        if (bRes && bRes.html) html = bRes.html;
+                    } catch (_) {}
+                }
+            }
+
             var articles = html.match(/<article[\s\S]*?<\/article>/gi) || [];
             if (articles.length === 0) continue;
 
@@ -447,7 +488,11 @@ async function searchVegamovies(query) {
                 var linkMatch = art.match(/href="([^"]+)"/);
                 var titleMatch = art.match(/title="([^"]+)"/) || art.match(/alt="([^"]+)"/);
                 if (linkMatch && titleMatch) {
-                    var rawTitle = titleMatch[1].replace(/<[^>]+>/g, '').trim();
+                    var rawTitle = titleMatch[1].replace(/<[^>]+>/g, '')
+                        .replace(/&amp;/g, '&')
+                        .replace(/&#039;/g, "'")
+                        .replace(/&quot;/g, '"')
+                        .trim();
                     results.push({
                         url: linkMatch[1],
                         title: rawTitle,
@@ -459,6 +504,58 @@ async function searchVegamovies(query) {
             if (results.length > 0) return results;
         } catch (_) {}
     }
+    return [];
+}
+
+/**
+ * Resolves vgmlinks gateway to Nexdrive or Fast-DL links.
+ */
+async function resolveVgmlinks(vgmUrl, isMovie, seasonNum, episodeNum) {
+    try {
+        var pageHtml = '';
+        if (typeof Browser !== 'undefined' && Browser.resolve) {
+            try {
+                var bRes = await Browser.resolve(vgmUrl);
+                if (bRes && bRes.html) pageHtml = bRes.html;
+            } catch (_) {}
+        }
+        if (!pageHtml) {
+            var res = await safeFetch(vgmUrl, {
+                headers: {
+                    'User-Agent': DEFAULT_HEADERS['User-Agent'],
+                    'Referer': BASE_URL + '/'
+                }
+            }, 8000);
+            if (res.ok) pageHtml = await res.text();
+        }
+
+        var nexMatch = pageHtml.match(/https?:\/\/[^\s"'<>]*nexdrive[^\s"'<>]*/i);
+        if (nexMatch) {
+            var nexRes = await resolveNexdrive(nexMatch[0], isMovie, seasonNum, episodeNum);
+            if (nexRes && nexRes.directFastDl) {
+                var cdn = await resolveFastDlOne(nexRes.directFastDl);
+                if (cdn) {
+                    return [{
+                        serverName: '10Gbps Google CDN',
+                        displayName: 'Google Cloud CDN',
+                        url: cdn,
+                        quality: nexRes.quality,
+                        priority: 1,
+                        headers: { 'User-Agent': DEFAULT_HEADERS['User-Agent'] }
+                    }];
+                }
+            } else if (nexRes && nexRes.hubUrls) {
+                var hubList = [];
+                for (var h = 0; h < nexRes.hubUrls.length; h++) {
+                    var srvs = await resolveHubCloud(nexRes.hubUrls[h]);
+                    hubList = hubList.concat(srvs.map(function(s) {
+                        return Object.assign({}, s, { quality: nexRes.quality });
+                    }));
+                }
+                return hubList;
+            }
+        }
+    } catch (_) {}
     return [];
 }
 
@@ -518,9 +615,18 @@ async function getStreams(tmdbId, mediaType, season, episode, extraArgs) {
     }
     console.log('[Vegamovies] Selected detail page: ' + selected.url);
 
-    var postRes = await safeFetch(selected.url, { headers: DEFAULT_HEADERS }, 8000);
-    if (!postRes.ok) return [];
-    var postHtml = await postRes.text();
+    var postHtml = '';
+    if (typeof Browser !== 'undefined' && Browser.resolve) {
+        try {
+            var bRes = await Browser.resolve(selected.url);
+            if (bRes && bRes.html) postHtml = bRes.html;
+        } catch (_) {}
+    }
+    if (!postHtml) {
+        var postRes = await safeFetch(selected.url, { headers: DEFAULT_HEADERS }, 8000);
+        if (postRes.ok) postHtml = await postRes.text();
+    }
+    if (!postHtml) return [];
 
     var audioInfo = parseAudiosFromText(selected.title + ' ' + postHtml.slice(0, 5000));
     var subtitleList = [];
@@ -535,8 +641,8 @@ async function getStreams(tmdbId, mediaType, season, episode, extraArgs) {
     var streamPromises = [];
     var seenStreamKeys = {};
 
-    // Extract all Nexdrive download links
-    var aRegex = /<a[^>]+href="([^"]*(?:nexdrive|vcloud|fast-dl)[^"]+)"[^>]*>([\s\S]*?)<\/a>/gi;
+    // Extract all Nexdrive, Fast-DL, Hubcloud, and VGMLinks download links
+    var aRegex = /<a[^>]+href="([^"]*(?:nexdrive|vcloud|fast-dl|vgmlinks)[^"]+)"[^>]*>([\s\S]*?)<\/a>/gi;
     var m;
     while ((m = aRegex.exec(postHtml)) !== null) {
         var href = m[1].replace(/&amp;/g, '&');
@@ -548,7 +654,7 @@ async function getStreams(tmdbId, mediaType, season, episode, extraArgs) {
                 streamPromises.push(
                     resolveNexdrive(nexUrl, isMovie, sNum, eNum).then(async function(result) {
                         if (!result) return [];
-                        var effectiveQuality = (result && result.quality) ? result.quality : quality;
+                        var effectiveQuality = (result && result.quality) ? result.quality : (quality || '1080p');
                         if (result.directFastDl) {
                             var directCdn = await resolveFastDlOne(result.directFastDl);
                             if (directCdn) {
@@ -575,6 +681,16 @@ async function getStreams(tmdbId, mediaType, season, episode, extraArgs) {
                     })
                 );
             })(href, linkQuality);
+        } else if (href.indexOf('vgmlinks') >= 0) {
+            (function(vgmUrl, quality) {
+                streamPromises.push(
+                    resolveVgmlinks(vgmUrl, isMovie, sNum, eNum).then(function(servers) {
+                        return servers.map(function(s) {
+                            return Object.assign({}, s, { quality: s.quality || quality || '1080p' });
+                        });
+                    })
+                );
+            })(href, linkQuality);
         } else if (href.indexOf('fast-dl.one') >= 0) {
             (function(fdlUrl, quality) {
                 streamPromises.push(
@@ -584,7 +700,7 @@ async function getStreams(tmdbId, mediaType, season, episode, extraArgs) {
                             serverName: '10Gbps Google CDN',
                             displayName: 'Google Cloud CDN',
                             url: directCdn,
-                            quality: quality,
+                            quality: quality || '1080p',
                             priority: 1,
                             headers: { 'User-Agent': DEFAULT_HEADERS['User-Agent'] }
                         }];
@@ -596,7 +712,7 @@ async function getStreams(tmdbId, mediaType, season, episode, extraArgs) {
                 streamPromises.push(
                     resolveHubCloud(hubUrl).then(function(servers) {
                         return servers.map(function(s) {
-                            return Object.assign({}, s, { quality: quality });
+                            return Object.assign({}, s, { quality: s.quality || quality || '1080p' });
                         });
                     })
                 );
@@ -627,11 +743,14 @@ async function getStreams(tmdbId, mediaType, season, episode, extraArgs) {
                                (item.url.indexOf('.mpd') >= 0 ? 'mpd' : 'mp4');
 
             finalStreams.push({
-                name: 'Vegamovies | ' + item.serverName,
+                name: 'Vegamovies | ' + item.serverName + ' • ' + audioInfo.badge + ' (' + item.quality + ')',
                 title: finalTitle,
                 url: item.url,
                 quality: item.quality,
+                type: streamFormat,
                 format: streamFormat,
+                provider: 'vegamovies',
+                language: (audioInfo.tag || 'hin').toLowerCase(),
                 headers: item.headers || { 'User-Agent': DEFAULT_HEADERS['User-Agent'] },
                 subtitles: subtitleList,
                 audio: {

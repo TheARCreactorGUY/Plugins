@@ -1,6 +1,6 @@
 {
   "name": "Community-Providers",
-  "version": "2.2.0",
+  "version": "2.3.0",
   "scrapers": [
     {
       "id": "movy",
@@ -174,7 +174,7 @@
       "id": "vegamovies",
       "name": "VegaMovies",
       "description": "Premier Bollywood, Hollywood, and regional high-speed direct stream provider powered by veqamovies.mobi featuring 10Gbps Google Cloud CDN, Fast-DL, and HubCloud servers with dynamic multi-audio and multi-season support",
-      "version": "1.1.0",
+      "version": "1.2.0",
       "author": "Secondary Agent",
       "supportedTypes": [
         "movie",
@@ -205,7 +205,7 @@
       "id": "bollyflix",
       "name": "Bollyflix",
       "description": "High-speed multi-audio and direct CDN provider for Bollywood, Hollywood Hindi Dubbed, and Web Series powered by bollyflix.co.za featuring FSL R2, 10Gbps Google CDN, Pixeldrain, and FastDL servers",
-      "version": "1.1.0",
+      "version": "1.2.0",
       "author": "Secondary Agent",
       "supportedTypes": [
         "movie",
@@ -235,7 +235,7 @@
       "id": "cinevood",
       "name": "Cinevood",
       "description": "Dedicated provider for Bollywood, Hollywood, and Indian Regional content powered by cinevood.dog featuring MobileJSR, Oxxfile Packs, HubCloud, FSL R2, and Google Cloud CDN servers",
-      "version": "1.1.0",
+      "version": "1.2.0",
       "author": "Secondary Agent",
       "supportedTypes": [
         "movie",
