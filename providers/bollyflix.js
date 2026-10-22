@@ -458,7 +458,7 @@ async function resolveFastDlServer(fastDlUrl) {
 
             if (typeof Browser !== 'undefined' && Browser.resolve) {
                 try {
-                    var bRes = await Browser.resolve(loc);
+                    var bRes = await Browser.resolve({ url: loc, timeoutMs: 8000 });
                     if (bRes) {
                         if (bRes.html) gdfHtml = bRes.html;
                         if (Array.isArray(bRes.sniffedMedia)) sniffedMedia = bRes.sniffedMedia;

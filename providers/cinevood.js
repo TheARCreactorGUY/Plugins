@@ -384,25 +384,33 @@ async function resolveMobileJsr(jsrUrl, isMovie, seasonNum, episodeNum) {
         var pageHtml = '';
         var sniffedMedia = [];
 
-        if (typeof Browser !== 'undefined' && Browser.resolve) {
+        // 1. Try safeFetch FIRST
+        try {
+            var fRes = await safeFetch(cleanJsr, {
+                headers: {
+                    'User-Agent': DEFAULT_HEADERS['User-Agent'],
+                    'Referer': BASE_URL + '/'
+                }
+            }, 5000);
+            if (fRes.ok) {
+                var txt = await fRes.text();
+                if (txt && txt.indexOf('Just a moment...') === -1 && txt.indexOf('challenges.cloudflare.com') === -1) {
+                    pageHtml = txt;
+                }
+            }
+        } catch (_) {}
+
+        // 2. Fall back to Browser.resolve with short timeout
+        if (!pageHtml && typeof Browser !== 'undefined' && Browser.resolve) {
             try {
-                var bRes = await Browser.resolve(cleanJsr);
+                var bRes = await Browser.resolve({
+                    url: cleanJsr,
+                    timeoutMs: 8000
+                });
                 if (bRes) {
                     if (bRes.html) pageHtml = bRes.html;
                     if (Array.isArray(bRes.sniffedMedia)) sniffedMedia = bRes.sniffedMedia;
                 }
-            } catch (_) {}
-        }
-
-        if (!pageHtml) {
-            try {
-                var fRes = await safeFetch(cleanJsr, {
-                    headers: {
-                        'User-Agent': DEFAULT_HEADERS['User-Agent'],
-                        'Referer': BASE_URL + '/'
-                    }
-                }, 8000);
-                if (fRes.ok) pageHtml = await fRes.text();
             } catch (_) {}
         }
 
@@ -731,12 +739,31 @@ async function getStreams(tmdbId, mediaType, season, episode, extraArgs) {
     if (isMovie) {
         var aRegex = /<a[^>]+href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi;
         var m;
+        var movieCandidates = [];
+        var seenCandidateQualities = {};
         while ((m = aRegex.exec(postHtml)) !== null) {
             var href = m[1];
             var label = m[2].replace(/<[^>]+>/g, '').trim();
-            var linkQuality = extractQualityFromContext(postHtml, m.index, label);
+            if (/batch|zip/i.test(label) || /sample/i.test(label)) continue;
+            var linkQuality = extractQualityFromContext(postHtml, m.index, label) || '1080p';
 
             if (href.indexOf('mobilejsr') >= 0 || href.indexOf('genxfm') >= 0) {
+                if (!seenCandidateQualities[linkQuality]) {
+                    seenCandidateQualities[linkQuality] = true;
+                    movieCandidates.push({ type: 'jsr', href: href, quality: linkQuality });
+                }
+            } else if (href.indexOf('oxxfile') >= 0 && href.indexOf('/s/') >= 0) {
+                movieCandidates.push({ type: 'oxx', href: href, quality: linkQuality });
+            } else if (href.indexOf('hubcloud.') >= 0 || href.indexOf('gamerxyt.') >= 0) {
+                movieCandidates.push({ type: 'hub', href: href, quality: linkQuality });
+            }
+        }
+
+        // Limit to at most 3 distinct candidates
+        var selectedCandidates = movieCandidates.slice(0, 3);
+        for (var c = 0; c < selectedCandidates.length; c++) {
+            var cand = selectedCandidates[c];
+            if (cand.type === 'jsr') {
                 (function(jsrUrl, quality) {
                     streamPromises.push(
                         resolveMobileJsr(jsrUrl, true, 1, 1).then(function(servers) {
@@ -745,8 +772,8 @@ async function getStreams(tmdbId, mediaType, season, episode, extraArgs) {
                             });
                         })
                     );
-                })(href, linkQuality);
-            } else if (href.indexOf('oxxfile') >= 0 && href.indexOf('/s/') >= 0) {
+                })(cand.href, cand.quality);
+            } else if (cand.type === 'oxx') {
                 (function(oxxUrl, quality) {
                     streamPromises.push(
                         resolveOxxfileSingle(oxxUrl).then(function(hubUrl) {
@@ -758,8 +785,8 @@ async function getStreams(tmdbId, mediaType, season, episode, extraArgs) {
                             });
                         })
                     );
-                })(href, linkQuality);
-            } else if (href.indexOf('hubcloud.') >= 0 || href.indexOf('gamerxyt.') >= 0) {
+                })(cand.href, cand.quality);
+            } else if (cand.type === 'hub') {
                 (function(hubUrl, quality) {
                     streamPromises.push(
                         resolveHubCloud(hubUrl).then(function(servers) {
@@ -768,7 +795,7 @@ async function getStreams(tmdbId, mediaType, season, episode, extraArgs) {
                             });
                         })
                     );
-                })(href, linkQuality);
+                })(cand.href, cand.quality);
             }
         }
     } else {
@@ -778,36 +805,40 @@ async function getStreams(tmdbId, mediaType, season, episode, extraArgs) {
         // 1. MobileJSR links
         var jsrRegex = /<a[^>]+href="([^"]*(?:mobilejsr|genxfm)[^"]+)"[^>]*>([\s\S]*?)<\/a>/gi;
         var jm;
+        var tvCandidates = [];
+        var seenTvQualities = {};
         while ((jm = jsrRegex.exec(postHtml)) !== null) {
             var jHref = jm[1];
             var jLabel = jm[2].replace(/<[^>]+>/g, '').trim();
+            if (/batch|zip/i.test(jLabel) || /sample/i.test(jLabel)) continue;
             var preSlice = postHtml.substring(Math.max(0, jm.index - 500), jm.index);
             var sMatch = preSlice.match(/season\s*0*(\d+)/i) || preSlice.match(/s0*(\d+)/i);
             var qFromSlice = parseQualityFromText(preSlice) || '1080p';
 
-            if (sMatch) {
-                if (Number(sMatch[1]) === sNum) {
-                    (function(jUrl, quality) {
-                        streamPromises.push(
-                            resolveMobileJsr(jUrl, false, sNum, eNum).then(function(servers) {
-                                return servers.map(function(s) {
-                                    return Object.assign({}, s, { quality: s.quality || quality || '1080p' });
-                                });
-                            })
-                        );
-                    })(jHref, qFromSlice);
+            if (sMatch && Number(sMatch[1]) === sNum) {
+                if (!seenTvQualities[qFromSlice]) {
+                    seenTvQualities[qFromSlice] = true;
+                    tvCandidates.push({ href: jHref, quality: qFromSlice });
                 }
-            } else if (sNum === 1) {
-                (function(jUrl, quality) {
-                    streamPromises.push(
-                        resolveMobileJsr(jUrl, false, sNum, eNum).then(function(servers) {
-                            return servers.map(function(s) {
-                                return Object.assign({}, s, { quality: s.quality || quality || '1080p' });
-                            });
-                        })
-                    );
-                })(jHref, qFromSlice);
+            } else if (!sMatch && sNum === 1) {
+                if (!seenTvQualities[qFromSlice]) {
+                    seenTvQualities[qFromSlice] = true;
+                    tvCandidates.push({ href: jHref, quality: qFromSlice });
+                }
             }
+        }
+
+        var selectedTv = tvCandidates.slice(0, 3);
+        for (var t = 0; t < selectedTv.length; t++) {
+            (function(jUrl, quality) {
+                streamPromises.push(
+                    resolveMobileJsr(jUrl, false, sNum, eNum).then(function(servers) {
+                        return servers.map(function(s) {
+                            return Object.assign({}, s, { quality: s.quality || quality || '1080p' });
+                        });
+                    })
+                );
+            })(selectedTv[t].href, selectedTv[t].quality);
         }
 
         // 2. Oxxfile TV Packs

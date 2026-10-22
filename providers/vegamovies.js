@@ -375,20 +375,23 @@ async function resolveFastDlOne(fastDlUrl) {
 async function resolveNexdrive(nexdriveUrl, isMovie, seasonNum, episodeNum) {
     try {
         var html = '';
-        if (typeof Browser !== 'undefined' && Browser.resolve) {
-            try {
-                var bRes = await Browser.resolve(nexdriveUrl);
-                if (bRes && bRes.html) html = bRes.html;
-            } catch (_) {}
-        }
-        if (!html) {
+        try {
             var res = await safeFetch(nexdriveUrl, {
                 headers: {
                     'User-Agent': DEFAULT_HEADERS['User-Agent'],
                     'Referer': BASE_URL + '/'
                 }
-            }, 8000);
+            }, 6000);
             if (res.ok) html = await res.text();
+        } catch (_) {}
+
+        if (!html || html.indexOf('challenges.cloudflare.com') >= 0 || html.indexOf('Just a moment...') >= 0) {
+            if (typeof Browser !== 'undefined' && Browser.resolve) {
+                try {
+                    var bRes = await Browser.resolve({ url: nexdriveUrl, timeoutMs: 8000 });
+                    if (bRes && bRes.html) html = bRes.html;
+                } catch (_) {}
+            }
         }
         if (!html) return null;
 
@@ -442,7 +445,7 @@ async function searchVegamovies(query) {
         seenBases[currentBase] = true;
 
         try {
-            // 1. DataLife Engine (DLE) POST search
+            // 1. DataLife Engine (DLE) POST search with titleonly=3
             var html = '';
             var postRes = await safeFetch(currentBase + '/index.php?do=search', {
                 method: 'POST',
@@ -451,7 +454,7 @@ async function searchVegamovies(query) {
                     'User-Agent': DEFAULT_HEADERS['User-Agent'],
                     'Referer': currentBase + '/'
                 },
-                body: 'do=search&subaction=search&story=' + encodeURIComponent(query)
+                body: 'do=search&subaction=search&story=' + encodeURIComponent(query) + '&titleonly=3'
             }, 8000);
 
             if (postRes.ok) {
@@ -473,7 +476,7 @@ async function searchVegamovies(query) {
             if (!html || html.indexOf('<article') === -1) {
                 if (typeof Browser !== 'undefined' && Browser.resolve) {
                     try {
-                        var bRes = await Browser.resolve(currentBase + '/?s=' + encodeURIComponent(query));
+                        var bRes = await Browser.resolve({ url: currentBase + '/?s=' + encodeURIComponent(query), timeoutMs: 8000 });
                         if (bRes && bRes.html) html = bRes.html;
                     } catch (_) {}
                 }
@@ -513,20 +516,23 @@ async function searchVegamovies(query) {
 async function resolveVgmlinks(vgmUrl, isMovie, seasonNum, episodeNum) {
     try {
         var pageHtml = '';
-        if (typeof Browser !== 'undefined' && Browser.resolve) {
-            try {
-                var bRes = await Browser.resolve(vgmUrl);
-                if (bRes && bRes.html) pageHtml = bRes.html;
-            } catch (_) {}
-        }
-        if (!pageHtml) {
+        try {
             var res = await safeFetch(vgmUrl, {
                 headers: {
                     'User-Agent': DEFAULT_HEADERS['User-Agent'],
                     'Referer': BASE_URL + '/'
                 }
-            }, 8000);
+            }, 6000);
             if (res.ok) pageHtml = await res.text();
+        } catch (_) {}
+
+        if (!pageHtml || pageHtml.indexOf('challenges.cloudflare.com') >= 0 || pageHtml.indexOf('Just a moment...') >= 0) {
+            if (typeof Browser !== 'undefined' && Browser.resolve) {
+                try {
+                    var bRes = await Browser.resolve({ url: vgmUrl, timeoutMs: 8000 });
+                    if (bRes && bRes.html) pageHtml = bRes.html;
+                } catch (_) {}
+            }
         }
 
         var nexMatch = pageHtml.match(/https?:\/\/[^\s"'<>]*nexdrive[^\s"'<>]*/i);
@@ -616,15 +622,18 @@ async function getStreams(tmdbId, mediaType, season, episode, extraArgs) {
     console.log('[Vegamovies] Selected detail page: ' + selected.url);
 
     var postHtml = '';
-    if (typeof Browser !== 'undefined' && Browser.resolve) {
-        try {
-            var bRes = await Browser.resolve(selected.url);
-            if (bRes && bRes.html) postHtml = bRes.html;
-        } catch (_) {}
-    }
-    if (!postHtml) {
-        var postRes = await safeFetch(selected.url, { headers: DEFAULT_HEADERS }, 8000);
+    try {
+        var postRes = await safeFetch(selected.url, { headers: DEFAULT_HEADERS }, 6000);
         if (postRes.ok) postHtml = await postRes.text();
+    } catch (_) {}
+
+    if (!postHtml || postHtml.indexOf('challenges.cloudflare.com') >= 0 || postHtml.indexOf('Just a moment...') >= 0) {
+        if (typeof Browser !== 'undefined' && Browser.resolve) {
+            try {
+                var bRes = await Browser.resolve({ url: selected.url, timeoutMs: 8000 });
+                if (bRes && bRes.html) postHtml = bRes.html;
+            } catch (_) {}
+        }
     }
     if (!postHtml) return [];
 
