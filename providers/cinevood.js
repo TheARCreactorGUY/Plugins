@@ -22,13 +22,15 @@
 /* =========================================================================
    CONFIG BLOCK: If site changes domain, update ONLY the URLs in this block.
    ========================================================================= */
-var BASE_URL = 'https://new1.cinevood.capital';
+var BASE_URL = 'https://cinevood.dog';
 var BACKUP_URLS = [
+    'https://cinevood.dog',
+    'https://cinevood.garden',
+    'https://cinevood.hair',
+    'https://cinevood.xyz',
     'https://new1.cinevood.capital',
-    'https://1cinevood.fyi',
     'https://cinevood.net',
-    'https://1cinevood.net',
-    'https://cinevood.fyi'
+    'https://1cinevood.fyi'
 ];
 var OXXFILE_BASE = 'https://new10.oxxfile.info';
 var OXXFILE_BACKUPS = [
@@ -79,12 +81,39 @@ function cleanTitle(t) {
 }
 
 function parseQualityFromText(text) {
-    if (!text) return '1080p';
+    if (!text) return null;
     var t = String(text);
-    if (/2160p|4k\b|uhd\b/i.test(t)) return '4K 2160p';
-    if (/1080[pi]\b|fhd\b/i.test(t)) return '1080p';
-    if (/720p\b|hd\b/i.test(t)) return '720p';
-    if (/480p\b|sd\b/i.test(t)) return '480p';
+    if (/\b(2160p|4k\b|uhd\b)/i.test(t)) return '4K 2160p';
+    if (/\b(1080[pi]\b|fhd\b)/i.test(t)) return '1080p';
+    if (/\b(720p\b|hd\b)/i.test(t)) return '720p';
+    if (/\b(480p\b|540p\b|360p\b|sd\b)/i.test(t)) return '480p';
+    return null;
+}
+
+function extractQualityFromContext(html, linkIndex, label) {
+    var q = parseQualityFromText(label);
+    if (q) return q;
+
+    var sliceBefore = html.substring(Math.max(0, linkIndex - 400), linkIndex);
+    var matches = [];
+    var qRegex = /\b(2160p|4k\b|uhd\b|1080[pi]\b|fhd\b|720p\b|hd\b|540p\b|480p\b|360p\b|sd\b)/gi;
+    var qm;
+    while ((qm = qRegex.exec(sliceBefore)) !== null) {
+        matches.push(qm[1]);
+    }
+    if (matches.length > 0) {
+        var lastMatch = matches[matches.length - 1];
+        var found = parseQualityFromText(lastMatch);
+        if (found) return found;
+    }
+
+    var sliceAfter = html.substring(linkIndex, Math.min(html.length, linkIndex + 250));
+    var afterMatches = sliceAfter.match(/\b(2160p|4k\b|uhd\b|1080[pi]\b|fhd\b|720p\b|hd\b|540p\b|480p\b|360p\b|sd\b)/i);
+    if (afterMatches) {
+        var foundAfter = parseQualityFromText(afterMatches[1]);
+        if (foundAfter) return foundAfter;
+    }
+
     return '1080p';
 }
 
@@ -305,6 +334,82 @@ async function resolveHubCloud(hubUrl) {
 }
 
 /**
+ * Resolves a mobilejsr / genxfm link to HubCloud, Google CDN, or direct streams.
+ */
+async function resolveMobileJsr(jsrUrl) {
+    try {
+        if (typeof Browser !== 'undefined' && Browser.resolve) {
+            try {
+                var bRes = await Browser.resolve(jsrUrl);
+                if (bRes && bRes.html) {
+                    var servers = [];
+                    var seenUrls = {};
+                    var aRegex = /<a[^>]+href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi;
+                    var m;
+                    while ((m = aRegex.exec(bRes.html)) !== null) {
+                        var href = m[1];
+                        var label = m[2].replace(/<[^>]+>/g, '').trim();
+                        if (!href || href.startsWith('#') || href.startsWith('/') || seenUrls[href]) continue;
+
+                        if (href.indexOf('video-downloads.googleusercontent.com') >= 0) {
+                            seenUrls[href] = true;
+                            servers.push({
+                                serverName: '10Gbps Pixel Cloud',
+                                displayName: 'Pixel Cloud (Google CDN)',
+                                url: href,
+                                priority: 1,
+                                headers: { 'User-Agent': DEFAULT_HEADERS['User-Agent'] }
+                            });
+                        } else if (href.indexOf('hubcloud') >= 0 || href.indexOf('gamerxyt') >= 0) {
+                            seenUrls[href] = true;
+                            var hubS = await resolveHubCloud(href);
+                            servers = servers.concat(hubS);
+                        } else if (href.indexOf('pixeldrain.com/u/') >= 0) {
+                            seenUrls[href] = true;
+                            var directPxl = href.replace(/\/u\/([a-zA-Z0-9_-]+)/, '/api/file/$1?download');
+                            servers.push({
+                                serverName: 'Pixeldrain',
+                                displayName: 'Pixeldrain Server',
+                                url: directPxl,
+                                priority: 2,
+                                headers: { 'User-Agent': DEFAULT_HEADERS['User-Agent'] }
+                            });
+                        } else if (href.indexOf('r2.cloudflarestorage.com') >= 0) {
+                            seenUrls[href] = true;
+                            servers.push({
+                                serverName: 'FSL R2',
+                                displayName: 'FSL R2 Server',
+                                url: href,
+                                priority: 1,
+                                headers: { 'User-Agent': DEFAULT_HEADERS['User-Agent'] }
+                            });
+                        } else if (href.indexOf('workers.dev') >= 0) {
+                            seenUrls[href] = true;
+                            servers.push({
+                                serverName: 'ZipDisk',
+                                displayName: 'ZipDisk Server',
+                                url: href,
+                                priority: 3,
+                                headers: { 'User-Agent': DEFAULT_HEADERS['User-Agent'] }
+                            });
+                        }
+                    }
+                    if (servers.length > 0) return servers;
+                }
+            } catch (_) {}
+        }
+
+        if (typeof globalThis.EmbedExtractor !== 'undefined' && globalThis.EmbedExtractor.canHandle(jsrUrl)) {
+            try {
+                var extStreams = await globalThis.EmbedExtractor.resolve(jsrUrl, { name: 'Cinevood' });
+                if (extStreams && extStreams.length > 0) return extStreams;
+            } catch (_) {}
+        }
+    } catch (_) {}
+    return [];
+}
+
+/**
  * Resolves an Oxxfile single link (/s/) to HubCloud URL.
  */
 async function resolveOxxfileSingle(oxxUrl) {
@@ -462,7 +567,10 @@ async function getStreams(tmdbId, mediaType, season, episode, extraArgs) {
             if (!selected) selected = cand;
         }
     }
-    if (!selected) selected = candidates[0];
+    if (!selected) {
+        console.log('[Cinevood] No matching candidate found for: ' + meta.title);
+        return [];
+    }
     console.log('[Cinevood] Selected detail page: ' + selected.url);
 
     var postHtml = '';
@@ -502,8 +610,19 @@ async function getStreams(tmdbId, mediaType, season, episode, extraArgs) {
         while ((m = aRegex.exec(postHtml)) !== null) {
             var href = m[1];
             var label = m[2].replace(/<[^>]+>/g, '').trim();
+            var linkQuality = extractQualityFromContext(postHtml, m.index, label);
 
-            if (href.indexOf('oxxfile') >= 0 && href.indexOf('/s/') >= 0) {
+            if (href.indexOf('mobilejsr') >= 0 || href.indexOf('genxfm') >= 0) {
+                (function(jsrUrl, quality) {
+                    streamPromises.push(
+                        resolveMobileJsr(jsrUrl).then(function(servers) {
+                            return servers.map(function(s) {
+                                return Object.assign({}, s, { quality: quality });
+                            });
+                        })
+                    );
+                })(href, linkQuality);
+            } else if (href.indexOf('oxxfile') >= 0 && href.indexOf('/s/') >= 0) {
                 (function(oxxUrl, quality) {
                     streamPromises.push(
                         resolveOxxfileSingle(oxxUrl).then(function(hubUrl) {
@@ -515,7 +634,7 @@ async function getStreams(tmdbId, mediaType, season, episode, extraArgs) {
                             });
                         })
                     );
-                })(href, parseQualityFromText(label || selected.title));
+                })(href, linkQuality);
             } else if (href.indexOf('hubcloud.') >= 0 || href.indexOf('gamerxyt.') >= 0) {
                 (function(hubUrl, quality) {
                     streamPromises.push(
@@ -525,16 +644,55 @@ async function getStreams(tmdbId, mediaType, season, episode, extraArgs) {
                             });
                         })
                     );
-                })(href, parseQualityFromText(label || selected.title));
+                })(href, linkQuality);
             }
         }
     } else {
-        // TV Series
+        // TV Series: support both Oxxfile packs and mobilejsr / genxfm episode links
+        var epRegex = new RegExp('(?:Episode\\s*0*' + eNum + '|E0*' + eNum + '|EP-\\s*0*' + eNum + ')\\b', 'i');
+
+        // 1. MobileJSR links
+        var jsrRegex = /<a[^>]+href="([^"]*(?:mobilejsr|genxfm)[^"]+)"[^>]*>([\s\S]*?)<\/a>/gi;
+        var jm;
+        while ((jm = jsrRegex.exec(postHtml)) !== null) {
+            var jHref = jm[1];
+            var jLabel = jm[2].replace(/<[^>]+>/g, '').trim();
+            var preSlice = postHtml.substring(Math.max(0, jm.index - 400), jm.index);
+            var sMatch = preSlice.match(/season\s*0*(\d+)/i) || preSlice.match(/s0*(\d+)/i);
+            var qFromSlice = parseQualityFromText(preSlice) || '1080p';
+
+            if (sMatch) {
+                if (Number(sMatch[1]) === sNum) {
+                    (function(jUrl, quality) {
+                        streamPromises.push(
+                            resolveMobileJsr(jUrl).then(function(servers) {
+                                return servers.map(function(s) {
+                                    return Object.assign({}, s, { quality: quality });
+                                });
+                            })
+                        );
+                    })(jHref, qFromSlice);
+                }
+            } else if (sNum === 1) {
+                (function(jUrl, quality) {
+                    streamPromises.push(
+                        resolveMobileJsr(jUrl).then(function(servers) {
+                            return servers.map(function(s) {
+                                return Object.assign({}, s, { quality: quality });
+                            });
+                        })
+                    );
+                })(jHref, qFromSlice);
+            }
+        }
+
+        // 2. Oxxfile TV Packs
         var packRegex = /<a[^>]+href="([^"]*oxxfile[^"]*\/p\/[^"]+)"[^>]*>([\s\S]*?)<\/a>/gi;
         var pm;
         while ((pm = packRegex.exec(postHtml)) !== null) {
             var pUrl = pm[1];
             var pLabel = pm[2].replace(/<[^>]+>/g, '').trim();
+            var packQuality = extractQualityFromContext(postHtml, pm.index, pLabel);
             (function(packUrl, quality) {
                 streamPromises.push(
                     resolveOxxfilePack(packUrl, sNum, eNum).then(function(hubUrl) {
@@ -546,7 +704,7 @@ async function getStreams(tmdbId, mediaType, season, episode, extraArgs) {
                         });
                     })
                 );
-            })(pUrl, parseQualityFromText(pLabel || selected.title));
+            })(pUrl, packQuality);
         }
     }
 
