@@ -391,31 +391,31 @@ async function fetchNativeStreams(candidate, isTv, season, episode, mediaTitle, 
         if (pRes.ok) {
             var pData = await pRes.json();
             if (pData && pData.data && Array.isArray(pData.data.streams)) {
-                for (var sIdx = 0; sIdx < pData.data.streams.length; sIdx++) {
-                    var s = pData.data.streams[sIdx];
-                    if (s && s.url && s.url.indexOf('http') === 0 && !seenUrls[s.url]) {
-                        seenUrls[s.url] = true;
-                        var qual = s.resolutions ? (s.resolutions + 'p') : '720p';
-                        var streamTitle = isTv
-                            ? (mediaTitle + ' ' + epTag + ' ' + audioBadge + ' - Freekz Native Direct [' + qual + ']')
-                            : (mediaTitle + ' (' + releaseYear + ') ' + audioBadge + ' - Freekz Native Direct [' + qual + ']');
+                var sortedPlay = pData.data.streams.filter(function(s) { return s && s.url && s.url.indexOf('http') === 0; })
+                    .sort(function(a, b) { return (Number(b.resolutions) || 0) - (Number(a.resolutions) || 0); });
+                if (sortedPlay.length > 0) {
+                    var s = sortedPlay[0];
+                    seenUrls[s.url] = true;
+                    var qual = s.resolutions ? (s.resolutions + 'p') : '1080p';
+                    var streamTitle = isTv
+                        ? (mediaTitle + ' ' + epTag + ' ' + audioBadge + ' - Freekz StreamHub Direct [' + qual + ']')
+                        : (mediaTitle + ' (' + releaseYear + ') ' + audioBadge + ' - Freekz StreamHub Direct [' + qual + ']');
 
-                        streams.push({
-                            name: 'Freekz | Native Direct • ' + audioBadge + ' (' + qual + ')',
-                            title: streamTitle,
-                            url: s.url,
-                            quality: qual,
-                            size: s.size ? (Math.round(s.size / (1024 * 1024)) + ' MB') : (isTv ? '750 MB' : '2.0 GB'),
-                            type: 'mp4',
-                            format: 'mp4',
-                            container: 'mp4',
-                            isSequential: true,
-                            provider: PROVIDER_ID,
-                            language: audioCode,
-                            headers: streamHeaders,
-                            subtitles: []
-                        });
-                    }
+                    streams.push({
+                        name: 'Freekz | StreamHub Direct • ' + audioBadge + ' (' + qual + ')',
+                        title: streamTitle,
+                        url: s.url,
+                        quality: qual,
+                        size: s.size ? (Math.round(s.size / (1024 * 1024)) + ' MB') : (isTv ? '750 MB' : '2.0 GB'),
+                        type: 'mp4',
+                        format: 'mp4',
+                        container: 'mp4',
+                        isSequential: true,
+                        provider: PROVIDER_ID,
+                        language: audioCode,
+                        headers: streamHeaders,
+                        subtitles: []
+                    });
                 }
             }
         }
@@ -428,31 +428,31 @@ async function fetchNativeStreams(candidate, isTv, season, episode, mediaTitle, 
         if (dRes.ok) {
             var dData = await dRes.json();
             if (dData && dData.data && Array.isArray(dData.data.downloads)) {
-                for (var dIdx = 0; dIdx < dData.data.downloads.length; dIdx++) {
-                    var d = dData.data.downloads[dIdx];
-                    if (d && d.url && d.url.indexOf('http') === 0 && !seenUrls[d.url]) {
-                        seenUrls[d.url] = true;
-                        var dQual = d.resolution ? (d.resolution + 'p') : '720p';
-                        var dTitle = isTv
-                            ? (mediaTitle + ' ' + epTag + ' ' + audioBadge + ' - Freekz Fast-DL Direct [' + dQual + ']')
-                            : (mediaTitle + ' (' + releaseYear + ') ' + audioBadge + ' - Freekz Fast-DL Direct [' + dQual + ']');
+                var sortedDl = dData.data.downloads.filter(function(d) { return d && d.url && d.url.indexOf('http') === 0 && !seenUrls[d.url]; })
+                    .sort(function(a, b) { return (Number(b.resolution) || 0) - (Number(a.resolution) || 0); });
+                if (sortedDl.length > 0) {
+                    var d = sortedDl[0];
+                    seenUrls[d.url] = true;
+                    var dQual = d.resolution ? (d.resolution + 'p') : '1080p';
+                    var dTitle = isTv
+                        ? (mediaTitle + ' ' + epTag + ' ' + audioBadge + ' - Freekz Fast-DL Direct [' + dQual + ']')
+                        : (mediaTitle + ' (' + releaseYear + ') ' + audioBadge + ' - Freekz Fast-DL Direct [' + dQual + ']');
 
-                        streams.push({
-                            name: 'Freekz | Fast-DL Direct • ' + audioBadge + ' (' + dQual + ')',
-                            title: dTitle,
-                            url: d.url,
-                            quality: dQual,
-                            size: d.size ? (Math.round(d.size / (1024 * 1024)) + ' MB') : (isTv ? '750 MB' : '2.0 GB'),
-                            type: 'mp4',
-                            format: 'mp4',
-                            container: 'mp4',
-                            isSequential: true,
-                            provider: PROVIDER_ID,
-                            language: audioCode,
-                            headers: streamHeaders,
-                            subtitles: []
-                        });
-                    }
+                    streams.push({
+                        name: 'Freekz | Fast-DL Direct • ' + audioBadge + ' (' + dQual + ')',
+                        title: dTitle,
+                        url: d.url,
+                        quality: dQual,
+                        size: d.size ? (Math.round(d.size / (1024 * 1024)) + ' MB') : (isTv ? '750 MB' : '2.0 GB'),
+                        type: 'mp4',
+                        format: 'mp4',
+                        container: 'mp4',
+                        isSequential: true,
+                        provider: PROVIDER_ID,
+                        language: audioCode,
+                        headers: streamHeaders,
+                        subtitles: []
+                    });
                 }
             }
 
@@ -534,15 +534,16 @@ var SERVERS = [
 
 function decryptLink(cipherText) {
     if (!cipherText || typeof cipherText !== 'string') return null;
-    if (cipherText.indexOf('http://') === 0 || cipherText.indexOf('https://') === 0) {
-        return cipherText;
+    var trimmed = cipherText.trim();
+    if (trimmed.indexOf('http://') === 0 || trimmed.indexOf('https://') === 0 || trimmed.indexOf('/') === 0) {
+        return trimmed;
     }
     try {
-        var cryptoObj = (typeof CryptoJS !== 'undefined') ? CryptoJS : ((typeof globalThis !== 'undefined' && globalThis.CryptoJS) ? globalThis.CryptoJS : null);
+        var cryptoObj = (typeof CryptoJS !== 'undefined') ? CryptoJS : ((typeof globalThis !== 'undefined' && globalThis.CryptoJS) ? globalThis.CryptoJS : (typeof require !== 'undefined' ? require('crypto-js') : null));
         if (cryptoObj && cryptoObj.AES && cryptoObj.enc && cryptoObj.enc.Utf8) {
-            var decrypted = cryptoObj.AES.decrypt(cipherText, AES_PASSPHRASE);
+            var decrypted = cryptoObj.AES.decrypt(trimmed, AES_PASSPHRASE);
             var utf8Str = decrypted.toString(cryptoObj.enc.Utf8);
-            if (utf8Str && (utf8Str.indexOf('http://') === 0 || utf8Str.indexOf('https://') === 0)) {
+            if (utf8Str && (utf8Str.indexOf('http://') === 0 || utf8Str.indexOf('https://') === 0 || utf8Str.indexOf('/') === 0)) {
                 return utf8Str;
             }
         }
@@ -729,7 +730,7 @@ async function fetchServerStream(serverId, tmdbId, effectiveType, season, episod
             'Accept': 'application/json, text/plain, */*'
         };
 
-        var streamRes = await fetchWithTimeout(BACKEND_URL + '/backend/database/' + serverId + '?' + params.toString(), {
+        var streamRes = await fetchWithTimeout(BACKEND_URL + '/backend/servers/' + serverId + '?' + params.toString(), {
             headers: dataHeaders
         }, 8500);
 
