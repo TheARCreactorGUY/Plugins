@@ -1,6 +1,6 @@
 {
   "name": "Community-Providers",
-  "version": "2.3.1",
+  "version": "2.3.2",
   "scrapers": [
     {
       "id": "movy",
@@ -234,8 +234,8 @@
     {
       "id": "cinevood",
       "name": "Cinevood",
-      "description": "Dedicated provider for Bollywood, Hollywood, and Indian Regional content powered by cinevood.dog featuring MobileJSR, Oxxfile Packs, HubCloud, FSL R2, and Google Cloud CDN servers",
-      "version": "1.2.1",
+      "description": "Dedicated provider for Bollywood, Hollywood, and Indian Regional content powered by cinevood.courses featuring MobileJSR, Oxxfile Packs, HubCloud, FSL R2, and Google Cloud CDN servers",
+      "version": "1.2.2",
       "author": "Secondary Agent",
       "supportedTypes": [
         "movie",
