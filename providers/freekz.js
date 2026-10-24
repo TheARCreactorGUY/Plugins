@@ -282,8 +282,8 @@ async function searchNativeSubjects(query) {
     return [];
 }
 
-function selectBestNativeCandidate(items, targetTitle, targetYear, isTv, season) {
-    if (!items || items.length === 0) return null;
+function selectNativeCandidates(items, targetTitle, targetYear, isTv, season) {
+    if (!items || items.length === 0) return [];
     var cleanTarget = cleanTitle(targetTitle);
     var targetWords = cleanTarget.split(' ').filter(function(w) { return w.length > 1; });
 
@@ -304,7 +304,7 @@ function selectBestNativeCandidate(items, targetTitle, targetYear, isTv, season)
                 var sRegex = new RegExp('\\b(s0*' + season + '|season\\s*0*' + season + ')\\b', 'i');
                 if (sRegex.test(item.title)) {
                     score += 300;
-                } else if (/\bs\d+\b/i.test(item.title)) {
+                } else if (/\\bs\\d+\\b/i.test(item.title)) {
                     score -= 300;
                 }
             }
@@ -335,11 +335,27 @@ function selectBestNativeCandidate(items, targetTitle, targetYear, isTv, season)
         }
 
         if (item.hasResource) score += 100;
-        scored.push({ item: item, score: score });
+        if (score > 100) {
+            scored.push({ item: item, score: score });
+        }
     }
 
     scored.sort(function(a, b) { return b.score - a.score; });
-    return (scored.length > 0 && scored[0].score > 0) ? scored[0].item : null;
+    if (scored.length === 0) return [];
+
+    var selected = [scored[0].item];
+    for (var j = 1; j < scored.length; j++) {
+        var it = scored[j].item;
+        var itTitle = (it.title || '') + ' ' + (it.corner || '');
+        if (/hindi|dub|multi|dual/i.test(itTitle)) {
+            var itClean = cleanTitle(it.title);
+            if (itClean.indexOf(cleanTarget) === 0 || cleanTarget.indexOf(itClean.split(' ')[0]) === 0) {
+                selected.push(it);
+                break;
+            }
+        }
+    }
+    return selected;
 }
 
 async function fetchNativeStreams(candidate, isTv, season, episode, mediaTitle, releaseYear) {
@@ -506,7 +522,11 @@ var LANGUAGE_MAP = {
     'te': { name: 'Telugu', tag: 'TEL' },
     'tel': { name: 'Telugu', tag: 'TEL' },
     'ar': { name: 'Arabic', tag: 'ARA' },
-    'zh': { name: 'Chinese', tag: 'CHI' }
+    'zh': { name: 'Chinese', tag: 'CHI' },
+    'tl': { name: 'Tagalog', tag: 'TGL' },
+    'tgl': { name: 'Tagalog', tag: 'TGL' },
+    'esla': { name: 'Latin Spanish', tag: 'SPA' },
+    'ptbr': { name: 'Brazilian Portuguese', tag: 'POR' }
 };
 
 function getLangInfo(codeOrName) {
@@ -526,11 +546,40 @@ function getLangInfo(codeOrName) {
 
 var SERVERS = [
     { id: "atlas", name: "Atlas", desc: "HLS CDN", format: "m3u8", defaultRes: "1080p", audioTag: "ENG", audioBadge: "[ENG]" },
-    { id: "ursa", name: "Ursa", desc: "Dual-Audio HLS", format: "m3u8", defaultRes: "1080p", audioTag: "MULTI", audioBadge: "[MULTI]" },
+    { id: "ursa", name: "Ursa", desc: "Dual-Audio HLS", format: "m3u8", defaultRes: "1080p", audioTag: "ENG", audioBadge: "[ENG]" },
     { id: "daedalus", name: "Daedalus", desc: "CloudFront CDN", format: "m3u8", defaultRes: "1080p", audioTag: "ENG", audioBadge: "[ENG]" },
-    { id: "orion", name: "Orion", desc: "DASH / Dubs", format: "mpd", defaultRes: "1080p", audioTag: "MULTI", audioBadge: "[MULTI]" },
+    { id: "orion", name: "Orion", desc: "DASH / Dubs", format: "mpd", defaultRes: "1080p", audioTag: "ENG", audioBadge: "[ENG]" },
     { id: "andromeda", name: "Andromeda", desc: "MPEG-DASH CDN", format: "mpd", defaultRes: "1080p", audioTag: "ENG", audioBadge: "[ENG]" }
 ];
+
+function detectServerAudio(url, server, dubInfo) {
+    if (dubInfo && (dubInfo.lanCode || dubInfo.lanName)) {
+        return getLangInfo(dubInfo.lanCode || dubInfo.lanName);
+    }
+    var clean = (url || '').toLowerCase();
+    if (clean.indexOf('hindi') >= 0 || clean.indexOf('_hin') >= 0 || clean.indexOf('/hin') >= 0) {
+        return getLangInfo('hi');
+    }
+    if (clean.indexOf('french') >= 0 || clean.indexOf('_fra') >= 0 || clean.indexOf('/fra') >= 0) {
+        return getLangInfo('fr');
+    }
+    if (clean.indexOf('spanish') >= 0 || clean.indexOf('_spa') >= 0 || clean.indexOf('/spa') >= 0) {
+        return getLangInfo('es');
+    }
+    if (clean.indexOf('tamil') >= 0 || clean.indexOf('_tam') >= 0 || clean.indexOf('/tam') >= 0) {
+        return getLangInfo('ta');
+    }
+    if (clean.indexOf('telugu') >= 0 || clean.indexOf('_tel') >= 0 || clean.indexOf('/tel') >= 0) {
+        return getLangInfo('te');
+    }
+    if (clean.indexOf('russian') >= 0 || clean.indexOf('_rus') >= 0 || clean.indexOf('/rus') >= 0) {
+        return getLangInfo('ru');
+    }
+    if (server && server.audioTag && server.audioTag !== 'MULTI') {
+        return getLangInfo(server.audioTag);
+    }
+    return getLangInfo('en');
+}
 
 function decryptLink(cipherText) {
     if (!cipherText || typeof cipherText !== 'string') return null;
@@ -538,13 +587,48 @@ function decryptLink(cipherText) {
     if (trimmed.indexOf('http://') === 0 || trimmed.indexOf('https://') === 0 || trimmed.indexOf('/') === 0) {
         return trimmed;
     }
+    // 1. Android QuickJS host runtime CryptoJS
     try {
-        var cryptoObj = (typeof CryptoJS !== 'undefined') ? CryptoJS : ((typeof globalThis !== 'undefined' && globalThis.CryptoJS) ? globalThis.CryptoJS : (typeof require !== 'undefined' ? require('crypto-js') : null));
+        var cryptoObj = (typeof CryptoJS !== 'undefined') ? CryptoJS : ((typeof globalThis !== 'undefined' && globalThis.CryptoJS) ? globalThis.CryptoJS : null);
         if (cryptoObj && cryptoObj.AES && cryptoObj.enc && cryptoObj.enc.Utf8) {
             var decrypted = cryptoObj.AES.decrypt(trimmed, AES_PASSPHRASE);
             var utf8Str = decrypted.toString(cryptoObj.enc.Utf8);
             if (utf8Str && (utf8Str.indexOf('http://') === 0 || utf8Str.indexOf('https://') === 0 || utf8Str.indexOf('/') === 0)) {
                 return utf8Str;
+            }
+        }
+    } catch (_) {}
+
+    // 2. Node.js environment fallback using built-in 'crypto'
+    try {
+        if (typeof require !== 'undefined') {
+            var nodeCrypto = require('crypto');
+            if (nodeCrypto && nodeCrypto.createDecipheriv) {
+                var raw = Buffer.from(trimmed, 'base64');
+                if (raw.subarray(0, 8).toString('utf8') === 'Salted__') {
+                    var salt = raw.subarray(8, 16);
+                    var ciphertext = raw.subarray(16);
+                    var d = Buffer.alloc(0);
+                    var dI = Buffer.alloc(0);
+                    var passBuf = Buffer.from(AES_PASSPHRASE, 'utf8');
+                    while (d.length < 48) {
+                        var h = nodeCrypto.createHash('md5');
+                        h.update(dI);
+                        h.update(passBuf);
+                        h.update(salt);
+                        dI = h.digest();
+                        d = Buffer.concat([d, dI]);
+                    }
+                    var key = d.subarray(0, 32);
+                    var iv = d.subarray(32, 48);
+                    var decipher = nodeCrypto.createDecipheriv('aes-256-cbc', key, iv);
+                    var dec = decipher.update(ciphertext);
+                    dec = Buffer.concat([dec, decipher.final()]);
+                    var resStr = dec.toString('utf8');
+                    if (resStr && (resStr.indexOf('http://') === 0 || resStr.indexOf('https://') === 0 || resStr.indexOf('/') === 0)) {
+                        return resStr;
+                    }
+                }
             }
         }
     } catch (_) {}
@@ -685,27 +769,30 @@ async function fetchSubtitles(tmdbId, effectiveType, season, episode, title, yea
     }
 }
 
-async function fetchServerStream(serverId, tmdbId, effectiveType, season, episode, title, year, date, latestDate, imdbId) {
+async function fetchServerStream(serverId, tmdbId, effectiveType, season, episode, title, year, date, latestDate, imdbId, dubCode, dubType, tokenOverride) {
     try {
-        var tokenPayload = {
-            [KEY_TMDB]: String(tmdbId),
-            [KEY_TYPE]: effectiveType,
-            [KEY_SERVER]: serverId
-        };
-        if (effectiveType === 'tv') {
-            tokenPayload[KEY_SEASON] = Number(season);
-            tokenPayload[KEY_EPISODE] = Number(episode);
+        var tokenData = tokenOverride;
+        if (!tokenData) {
+            var tokenPayload = {
+                [KEY_TMDB]: String(tmdbId),
+                [KEY_TYPE]: effectiveType,
+                [KEY_SERVER]: serverId
+            };
+            if (effectiveType === 'tv') {
+                tokenPayload[KEY_SEASON] = Number(season);
+                tokenPayload[KEY_EPISODE] = Number(episode);
+            }
+
+            var tokenRes = await fetchWithTimeout(BACKEND_URL + '/backend/zxc', {
+                method: 'POST',
+                headers: DEFAULT_HEADERS,
+                body: JSON.stringify(tokenPayload)
+            }, 5000);
+
+            if (!tokenRes.ok) return null;
+            tokenData = await tokenRes.json();
+            if (!tokenData || !tokenData.token || !tokenData.ts) return null;
         }
-
-        var tokenRes = await fetchWithTimeout(BACKEND_URL + '/backend/zxc', {
-            method: 'POST',
-            headers: DEFAULT_HEADERS,
-            body: JSON.stringify(tokenPayload)
-        }, 5000);
-
-        if (!tokenRes.ok) return null;
-        var tokenData = await tokenRes.json();
-        if (!tokenData || !tokenData.token || !tokenData.ts) return null;
 
         var params = new URLSearchParams({
             [KEY_TMDB]: String(tmdbId),
@@ -723,6 +810,10 @@ async function fetchServerStream(serverId, tmdbId, effectiveType, season, episod
             params.set(KEY_EPISODE, String(episode));
         }
         if (imdbId) params.set(KEY_IMDB, imdbId);
+        if (dubCode) {
+            params.set('dubCode', String(dubCode));
+            params.set('dubType', String(dubType || 0));
+        }
 
         var dataHeaders = {
             'User-Agent': DEFAULT_HEADERS['User-Agent'],
@@ -736,7 +827,11 @@ async function fetchServerStream(serverId, tmdbId, effectiveType, season, episod
 
         if (!streamRes.ok) return null;
         var data = await streamRes.json();
-        return (data && (data.links || data.dubs || data.subtitles)) ? data : null;
+        if (data && (data.links || data.dubs || data.subtitles)) {
+            data._tokenData = tokenData;
+            return data;
+        }
+        return null;
     } catch (_) {
         return null;
     }
@@ -848,18 +943,32 @@ async function getStreams(tmdbId, mediaType, season, episode, extraArgs) {
             try {
                 var searchQ = mediaTitle.replace(/[^\w\s]/g, ' ').replace(/\s+/g, ' ').trim();
                 var items = await searchNativeSubjects(searchQ);
-                var cand = selectBestNativeCandidate(items, mediaTitle, releaseYear, !isMovie, sNum);
-                if (!cand && searchQ.indexOf(' ') >= 0) {
-                    // Try first word search if compound title returned 0 matches
+                var cands = selectNativeCandidates(items, mediaTitle, releaseYear, !isMovie, sNum);
+                if (cands.length === 0 && searchQ.indexOf(' ') >= 0) {
                     var firstWord = searchQ.split(' ')[0];
                     if (firstWord && firstWord.length > 3) {
                         items = await searchNativeSubjects(firstWord);
-                        cand = selectBestNativeCandidate(items, mediaTitle, releaseYear, !isMovie, sNum);
+                        cands = selectNativeCandidates(items, mediaTitle, releaseYear, !isMovie, sNum);
                     }
                 }
-                if (cand) {
-                    return await fetchNativeStreams(cand, !isMovie, sNum, eNum, mediaTitle, releaseYear);
+                var allStreams = [];
+                var allSubs = [];
+                var seenNativeBaseUrls = {};
+                for (var ci = 0; ci < cands.length; ci++) {
+                    var nRes = await fetchNativeStreams(cands[ci], !isMovie, sNum, eNum, mediaTitle, releaseYear);
+                    if (nRes && Array.isArray(nRes.streams)) {
+                        for (var nsi = 0; nsi < nRes.streams.length; nsi++) {
+                            var st = nRes.streams[nsi];
+                            var baseKey = (st.url || '').split('?')[0];
+                            if (!seenNativeBaseUrls[baseKey]) {
+                                seenNativeBaseUrls[baseKey] = true;
+                                allStreams.push(st);
+                            }
+                        }
+                    }
+                    if (nRes && Array.isArray(nRes.subtitles)) allSubs = allSubs.concat(nRes.subtitles);
                 }
+                return { streams: allStreams, subtitles: allSubs };
             } catch (err) {
                 console.error('[Freekz] Native engine error:', err);
             }
@@ -876,7 +985,7 @@ async function getStreams(tmdbId, mediaType, season, episode, extraArgs) {
                 fetchServerStream('ursa', tmdbId, effectiveType, sNum, eNum, mediaTitle, releaseYear, releaseDate, latestDate, imdbId)
             ]);
 
-            await sleep(120);
+            await sleep(100);
 
             var batch2 = await Promise.all([
                 fetchServerStream('daedalus', tmdbId, effectiveType, sNum, eNum, mediaTitle, releaseYear, releaseDate, latestDate, imdbId),
@@ -884,7 +993,32 @@ async function getStreams(tmdbId, mediaType, season, episode, extraArgs) {
                 fetchServerStream('andromeda', tmdbId, effectiveType, sNum, eNum, mediaTitle, releaseYear, releaseDate, latestDate, imdbId)
             ]);
 
-            return [batch1[0], batch1[1], batch2[0], batch2[1], batch2[2]];
+            var orionData = batch2[1];
+            var extraDubs = [];
+
+            if (orionData && Array.isArray(orionData.dubs)) {
+                var audioDubs = orionData.dubs.filter(function(d) { return d && d.type === 0 && !d.original; }).slice(0, 6);
+                if (audioDubs.length > 0) {
+                    var dubFetches = audioDubs.map(function(dub) {
+                        return fetchServerStream('orion', tmdbId, effectiveType, sNum, eNum, mediaTitle, releaseYear, releaseDate, latestDate, imdbId, dub.lanCode, dub.type, orionData._tokenData)
+                            .then(function(res) {
+                                if (res && res.links && res.links[0]) {
+                                    return { dub: dub, data: res };
+                                }
+                                return null;
+                            }).catch(function() { return null; });
+                    });
+                    var dubRes = await Promise.all(dubFetches);
+                    for (var dr = 0; dr < dubRes.length; dr++) {
+                        if (dubRes[dr]) extraDubs.push(dubRes[dr]);
+                    }
+                }
+            }
+
+            return {
+                servers: [batch1[0], batch1[1], batch2[0], batch2[1], batch2[2]],
+                extraDubs: extraDubs
+            };
         })();
 
         var nativeRes = await nativePromise;
@@ -919,10 +1053,11 @@ async function getStreams(tmdbId, mediaType, season, episode, extraArgs) {
         }
 
         // 2. Add Vidstuck CDN Server Streams
+        var serverList = (serverResults && serverResults.servers) || [];
         var collectedItems = [];
         for (var i = 0; i < SERVERS.length; i++) {
             var server = SERVERS[i];
-            var data = serverResults[i];
+            var data = serverList[i];
             if (!data) continue;
 
             var payloadSubs = [];
@@ -978,16 +1113,6 @@ async function getStreams(tmdbId, mediaType, season, episode, extraArgs) {
                 }
             }
 
-            var mainAudioTag = server.audioTag;
-            var mainAudioBadge = server.audioBadge;
-            if (dubCodes.length > 1) {
-                mainAudioTag = 'MULTI';
-                mainAudioBadge = '[MULTI] [' + dubCodes.slice(0, 6).join(' · ') + ']';
-            } else if (dubCodes.length === 1) {
-                mainAudioTag = dubCodes[0];
-                mainAudioBadge = '[' + dubCodes[0] + ']';
-            }
-
             var linksArray = Array.isArray(data.links) ? data.links : [];
             for (var j = 0; j < linksArray.length; j++) {
                 var linkObj = linksArray[j];
@@ -1012,6 +1137,10 @@ async function getStreams(tmdbId, mediaType, season, episode, extraArgs) {
                     serverDisplayName = server.name + ' (' + quality + ')';
                 }
 
+                var audioInfo = detectServerAudio(finalUrl, server);
+                var mainAudioTag = audioInfo.tag;
+                var mainAudioBadge = '[' + audioInfo.tag + ']';
+
                 collectedItems.push({
                     serverId: server.id,
                     serverName: serverDisplayName,
@@ -1020,13 +1149,51 @@ async function getStreams(tmdbId, mediaType, season, episode, extraArgs) {
                     type: fmtInfo.type,
                     format: fmtInfo.format,
                     audioTag: mainAudioTag,
-                    audioCode: mainAudioTag === 'MULTI' ? 'multi' : mainAudioTag.toLowerCase().slice(0, 2),
+                    audioCode: audioInfo.code || 'en',
                     audioBadge: mainAudioBadge
                 });
             }
 
             for (var sd = 0; sd < separateDubStreams.length; sd++) {
                 collectedItems.push(separateDubStreams[sd]);
+            }
+        }
+
+        // Add dynamically fetched Orion audio dub streams
+        if (serverResults && Array.isArray(serverResults.extraDubs)) {
+            for (var edIdx = 0; edIdx < serverResults.extraDubs.length; edIdx++) {
+                var edItem = serverResults.extraDubs[edIdx];
+                if (!edItem || !edItem.dub || !edItem.data || !edItem.data.links || !edItem.data.links[0]) continue;
+                var edDub = edItem.dub;
+                var edLink = edItem.data.links[0];
+                var rawDec = decryptLink(edLink.link);
+                if (!rawDec || rawDec.indexOf('zxcstream.xyz') >= 0) continue;
+                var finalUrl = normalizeUrl(rawDec);
+                if (seenUrls[finalUrl]) continue;
+                seenUrls[finalUrl] = true;
+
+                var lInfo = getLangInfo(edDub.lanCode || edDub.lanName);
+                var dubTitle = isMovie
+                    ? (mediaTitle + ' (' + releaseYear + ') [' + lInfo.tag + '] - ' + PROVIDER_NAME + ' Orion [' + lInfo.name + ' Dub]')
+                    : (mediaTitle + ' ' + epTag + ' [' + lInfo.tag + '] - ' + PROVIDER_NAME + ' Orion [' + lInfo.name + ' Dub]');
+
+                var displayName = PROVIDER_NAME + ' | Orion (' + lInfo.name + ') • [' + lInfo.tag + ']';
+
+                streams.push({
+                    name: displayName,
+                    title: dubTitle,
+                    url: finalUrl,
+                    quality: '1080p',
+                    size: isMovie ? '2.0 GB' : '750 MB',
+                    type: 'mpd',
+                    format: 'dash',
+                    container: 'dash',
+                    isSequential: false,
+                    provider: PROVIDER_ID,
+                    language: lInfo.code || 'en',
+                    headers: buildHeadersForStreamUrl(finalUrl),
+                    subtitles: allSubtitles
+                });
             }
         }
 
