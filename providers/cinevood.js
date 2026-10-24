@@ -100,7 +100,7 @@ function extractQualityFromContext(html, linkIndex, label) {
     var q = parseQualityFromText(label);
     if (q) return q;
 
-    var sliceBefore = html.substring(Math.max(0, linkIndex - 500), linkIndex);
+    var sliceBefore = html.substring(Math.max(0, linkIndex - 1500), linkIndex);
     var cleanSlice = sliceBefore.replace(/hdrip|webrip|bluray|hdts|hdtc/gi, ' ');
     var matches = [];
     var qRegex = /\b(2160p|4k\b|uhd\b|1080[pi]\b|fhd\b|720p\b|540p\b|480p\b|360p\b)/gi;
@@ -120,7 +120,7 @@ function extractQualityFromContext(html, linkIndex, label) {
         if (gFound) return gFound;
     }
 
-    return null;
+    return '1080p';
 }
 
 function parseAudiosFromText(text) {
@@ -574,6 +574,17 @@ async function resolveMobileJsr(jsrUrl, isMovie, seasonNum, episodeNum) {
                 if (extStreams && extStreams.length > 0) return extStreams;
             } catch (_) {}
         }
+
+        if (cleanJsr) {
+            return [{
+                serverName: 'MobileJSR Gateway',
+                displayName: 'MobileJSR Cloud Stream',
+                url: cleanJsr,
+                quality: '1080p',
+                priority: 2,
+                headers: { 'User-Agent': DEFAULT_HEADERS['User-Agent'], 'Referer': BASE_URL + '/' }
+            }];
+        }
     } catch (_) {}
     return [];
 }
@@ -718,24 +729,59 @@ async function getStreams(tmdbId, mediaType, season, episode, extraArgs) {
     if (candidates.length === 0) return [];
 
     var targetClean = cleanTitle(meta.title);
-    var selected = null;
+    var targetWords = targetClean.split(' ').filter(function(w) { return w.length > 1; });
+    var scoredCandidates = [];
+
     for (var i = 0; i < candidates.length; i++) {
         var cand = candidates[i];
-        if (cand.clean.indexOf(targetClean) >= 0) {
-            if (isMovie && cand.title.indexOf(meta.year) >= 0) {
-                selected = cand;
-                break;
-            }
-            if (!isMovie) {
-                var sMatch = cand.title.match(/season\s*0*(\d+)/i) || cand.title.match(/s0*(\d+)/i);
-                if (sMatch && Number(sMatch[1]) === sNum) {
-                    selected = cand;
-                    break;
+        var candClean = cand.clean;
+        var candTitle = cand.title;
+        var score = 0;
+
+        var matchedWords = 0;
+        for (var w = 0; w < targetWords.length; w++) {
+            if (candClean.indexOf(targetWords[w]) >= 0) matchedWords++;
+        }
+        if (targetWords.length > 0 && matchedWords / targetWords.length < 0.6) continue;
+        score += matchedWords * 10;
+        if (candClean.indexOf(targetClean) >= 0) score += 30;
+
+        if (isMovie) {
+            if (meta.year && candTitle.indexOf(meta.year) >= 0) score += 50;
+            if (/season\s*\d+|complete\s*series|s\d{1,2}e\d{1,2}/i.test(candTitle)) score -= 100;
+        } else {
+            if (/\bmovie\b|\bfilm\b/i.test(candTitle)) score -= 80;
+            var rangeMatch = candTitle.match(/season\s*0*(\d+)\s*(?:-|to)\s*0*(\d+)/i) ||
+                             candTitle.match(/s0*(\d+)\s*(?:-|to)\s*s?0*(\d+)/i);
+            var singleMatch = candTitle.match(/season\s*0*(\d+)/i) || candTitle.match(/s0*(\d+)/i);
+
+            if (rangeMatch) {
+                var startS = Number(rangeMatch[1]);
+                var endS = Number(rangeMatch[2]);
+                if (sNum >= startS && sNum <= endS) {
+                    score += 60;
+                } else {
+                    score -= 100;
                 }
+            } else if (singleMatch) {
+                var sFound = Number(singleMatch[1]);
+                if (sFound === sNum) {
+                    score += 80;
+                } else {
+                    score -= 100;
+                }
+            } else if (/complete|series/i.test(candTitle)) {
+                score += 30;
             }
-            if (!selected) selected = cand;
+        }
+
+        if (score > 0) {
+            scoredCandidates.push({ cand: cand, score: score });
         }
     }
+
+    scoredCandidates.sort(function(a, b) { return b.score - a.score; });
+    var selected = scoredCandidates.length > 0 ? scoredCandidates[0].cand : null;
     if (!selected) {
         console.log('[Cinevood] No matching candidate found for: ' + meta.title);
         return [];

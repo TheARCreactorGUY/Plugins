@@ -179,9 +179,32 @@ function sleep(ms) {
  */
 async function fetchSubtitles(tmdbId, effectiveType, season, episode, title, year, date, latestDate) {
     try {
+        var tokenPayload = {
+            [KEY_TMDB]: String(tmdbId),
+            [KEY_TYPE]: effectiveType,
+            [KEY_SERVER]: 'subtitle'
+        };
+        if (effectiveType === 'tv') {
+            tokenPayload[KEY_SEASON] = Number(season);
+            tokenPayload[KEY_EPISODE] = Number(episode);
+        }
+
+        var tokenRes = await fetchWithTimeout(BACKEND_URL + '/backend/zxc', {
+            method: 'POST',
+            headers: DEFAULT_HEADERS,
+            body: JSON.stringify(tokenPayload)
+        }, 5000);
+
+        if (!tokenRes.ok) return [];
+        var tokenData = await tokenRes.json();
+        if (!tokenData || !tokenData.token || !tokenData.ts) return [];
+
         var params = new URLSearchParams({
             [KEY_TMDB]: String(tmdbId),
             [KEY_TYPE]: effectiveType,
+            [KEY_SERVER]: 'subtitle',
+            [KEY_TS]: String(tokenData.ts),
+            [KEY_TOKEN]: tokenData.token,
             [KEY_TITLE]: title,
             [KEY_YEAR]: year,
             [KEY_DATE]: date
@@ -194,9 +217,15 @@ async function fetchSubtitles(tmdbId, effectiveType, season, episode, title, yea
             params.set(KEY_EPISODE, String(episode));
         }
 
+        var subHeaders = {
+            'User-Agent': DEFAULT_HEADERS['User-Agent'],
+            'Referer': BACKEND_URL + '/',
+            'Accept': 'application/json, text/plain, */*'
+        };
+
         var subRes = await fetchWithTimeout(BACKEND_URL + '/backend/subtitle?' + params.toString(), {
-            headers: DEFAULT_HEADERS
-        }, 5500);
+            headers: subHeaders
+        }, 10000);
 
         if (!subRes.ok) return [];
         var subData = await subRes.json();
@@ -227,12 +256,13 @@ async function fetchSubtitles(tmdbId, effectiveType, season, episode, title, yea
         }
         return results;
     } catch (e) {
+        console.warn('[Freekz] Subtitle fetch error:', e && e.message ? e.message : e);
         return [];
     }
 }
 
 /**
- * Performs 2-step token handshake with /backend/vidstuck and queries /backend/servers/{serverId}.
+ * Performs 2-step token handshake with /backend/zxc and queries /backend/servers/{serverId}.
  */
 async function fetchServerStream(serverId, tmdbId, effectiveType, season, episode, title, year, date, latestDate, imdbId) {
     try {
@@ -246,7 +276,7 @@ async function fetchServerStream(serverId, tmdbId, effectiveType, season, episod
             tokenPayload[KEY_EPISODE] = Number(episode);
         }
 
-        var tokenRes = await fetchWithTimeout(BACKEND_URL + '/backend/vidstuck', {
+        var tokenRes = await fetchWithTimeout(BACKEND_URL + '/backend/zxc', {
             method: 'POST',
             headers: DEFAULT_HEADERS,
             body: JSON.stringify(tokenPayload)
@@ -392,8 +422,10 @@ async function getStreams(tmdbId, mediaType, season, episode, extraArgs) {
         releaseDate = releaseDate || (releaseYear + '-01-01');
         latestDate = latestDate || releaseDate;
 
-        // 1. Fetch subtitles concurrently
-        var subtitlesPromise = fetchSubtitles(tmdbId, effectiveType, sNum, eNum, mediaTitle, releaseYear, releaseDate, latestDate);
+        // 1. Fetch subtitles concurrently (staggered slightly to avoid /backend/zxc token stampede)
+        var subtitlesPromise = sleep(120).then(function() {
+            return fetchSubtitles(tmdbId, effectiveType, sNum, eNum, mediaTitle, releaseYear, releaseDate, latestDate);
+        });
 
         // 2. Query servers in 2 staggered batches to avoid HTTP 429 rate limits
         var batch1 = await Promise.all([
@@ -401,7 +433,7 @@ async function getStreams(tmdbId, mediaType, season, episode, extraArgs) {
             fetchServerStream('ursa', tmdbId, effectiveType, sNum, eNum, mediaTitle, releaseYear, releaseDate, latestDate, imdbId)
         ]);
 
-        await sleep(60);
+        await sleep(150);
 
         var batch2 = await Promise.all([
             fetchServerStream('daedalus', tmdbId, effectiveType, sNum, eNum, mediaTitle, releaseYear, releaseDate, latestDate, imdbId),
@@ -581,7 +613,7 @@ async function getStreams(tmdbId, mediaType, season, episode, extraArgs) {
         // Fallback: If Direct API returned 0 streams (e.g., if vidstuck.cc ever rotates AES_PASSPHRASE or KEY_TOKEN),
         // automatically fall back to Headless Browser.resolve with auto-clicking server switcher tabs
         if (streams.length === 0) {
-            var fallbackUrl = BASE_URL + '/watch/' + effectiveType + '/' + tmdbId + (!isMovie ? '/' + sNum + '/' + eNum : '');
+            var fallbackUrl = 'https://vidstuck.cc/embed/' + (isMovie ? 'movie/' + tmdbId : 'tv/' + tmdbId + '/' + sNum + '/' + eNum);
             try {
                 var browserApi = (typeof Browser !== 'undefined' && Browser.resolve) ? Browser : ((typeof globalThis !== 'undefined' && globalThis.Browser && globalThis.Browser.resolve) ? globalThis.Browser : null);
                 if (browserApi) {
