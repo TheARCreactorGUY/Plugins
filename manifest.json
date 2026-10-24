@@ -1,6 +1,6 @@
 {
   "name": "Community-Providers",
-  "version": "2.4.3",
+  "version": "2.4.4",
   "scrapers": [
     {
       "id": "movy",
@@ -143,7 +143,7 @@
       "id": "freekz",
       "name": "Freekz",
       "description": "High-speed multi-engine streaming provider for movies and TV shows powered by Freekz StreamHub Native App & Vidstuck featuring direct MP4 CDN mirrors (1080p, 720p, 480p) and 5 Vidstuck CDN servers (Atlas, Ursa, Daedalus, Orion, Andromeda) with multi-audio and extensive subtitle support",
-      "version": "2.2.0",
+      "version": "2.2.1",
       "author": "Euthopiar Core Team",
       "supportedTypes": [
         "movie",

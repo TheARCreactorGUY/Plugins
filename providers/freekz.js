@@ -304,7 +304,7 @@ function selectNativeCandidates(items, targetTitle, targetYear, isTv, season) {
                 var sRegex = new RegExp('\\b(s0*' + season + '|season\\s*0*' + season + ')\\b', 'i');
                 if (sRegex.test(item.title)) {
                     score += 300;
-                } else if (/\\bs\\d+\\b/i.test(item.title)) {
+                } else if (/\bs\d+\b/i.test(item.title)) {
                     score -= 300;
                 }
             }
@@ -335,16 +335,15 @@ function selectNativeCandidates(items, targetTitle, targetYear, isTv, season) {
         }
 
         if (item.hasResource) score += 100;
-        if (score > 100) {
-            scored.push({ item: item, score: score });
-        }
+        scored.push({ item: item, score: score });
     }
 
     scored.sort(function(a, b) { return b.score - a.score; });
-    if (scored.length === 0) return [];
+    if (scored.length === 0 || scored[0].score <= 0) return [];
 
     var selected = [scored[0].item];
     for (var j = 1; j < scored.length; j++) {
+        if (scored[j].score <= 0) continue;
         var it = scored[j].item;
         var itTitle = (it.title || '') + ' ' + (it.corner || '');
         if (/hindi|dub|multi|dual/i.test(itTitle)) {
@@ -587,9 +586,17 @@ function decryptLink(cipherText) {
     if (trimmed.indexOf('http://') === 0 || trimmed.indexOf('https://') === 0 || trimmed.indexOf('/') === 0) {
         return trimmed;
     }
-    // 1. Android QuickJS host runtime CryptoJS
+    // 1. Android QuickJS host runtime CryptoJS (supports global and require('crypto-js'))
     try {
-        var cryptoObj = (typeof CryptoJS !== 'undefined') ? CryptoJS : ((typeof globalThis !== 'undefined' && globalThis.CryptoJS) ? globalThis.CryptoJS : null);
+        var cryptoObj = null;
+        if (typeof CryptoJS !== 'undefined' && CryptoJS.AES) {
+            cryptoObj = CryptoJS;
+        } else if (typeof globalThis !== 'undefined' && globalThis.CryptoJS && globalThis.CryptoJS.AES) {
+            cryptoObj = globalThis.CryptoJS;
+        } else if (typeof require !== 'undefined') {
+            try { cryptoObj = require('crypto-js'); } catch (_) {}
+        }
+
         if (cryptoObj && cryptoObj.AES && cryptoObj.enc && cryptoObj.enc.Utf8) {
             var decrypted = cryptoObj.AES.decrypt(trimmed, AES_PASSPHRASE);
             var utf8Str = decrypted.toString(cryptoObj.enc.Utf8);
@@ -602,8 +609,9 @@ function decryptLink(cipherText) {
     // 2. Node.js environment fallback using built-in 'crypto'
     try {
         if (typeof require !== 'undefined') {
-            var nodeCrypto = require('crypto');
-            if (nodeCrypto && nodeCrypto.createDecipheriv) {
+            var nodeCrypto = null;
+            try { nodeCrypto = require('crypto'); } catch (_) {}
+            if (nodeCrypto && typeof nodeCrypto.createDecipheriv === 'function') {
                 var raw = Buffer.from(trimmed, 'base64');
                 if (raw.subarray(0, 8).toString('utf8') === 'Salted__') {
                     var salt = raw.subarray(8, 16);
@@ -734,7 +742,7 @@ async function fetchSubtitles(tmdbId, effectiveType, season, episode, title, yea
 
         var subRes = await fetchWithTimeout(BACKEND_URL + '/backend/subtitle?' + params.toString(), {
             headers: subHeaders
-        }, 8000);
+        }, 1500);
 
         if (!subRes.ok) return [];
         var subData = await subRes.json();
@@ -823,7 +831,7 @@ async function fetchServerStream(serverId, tmdbId, effectiveType, season, episod
 
         var streamRes = await fetchWithTimeout(BACKEND_URL + '/backend/servers/' + serverId + '?' + params.toString(), {
             headers: dataHeaders
-        }, 8500);
+        }, 4500);
 
         if (!streamRes.ok) return null;
         var data = await streamRes.json();
@@ -980,45 +988,60 @@ async function getStreams(tmdbId, mediaType, season, episode, extraArgs) {
         });
 
         var vidstuckPromise = (async function() {
-            var batch1 = await Promise.all([
-                fetchServerStream('atlas', tmdbId, effectiveType, sNum, eNum, mediaTitle, releaseYear, releaseDate, latestDate, imdbId),
-                fetchServerStream('ursa', tmdbId, effectiveType, sNum, eNum, mediaTitle, releaseYear, releaseDate, latestDate, imdbId)
-            ]);
+            try {
+                var batch1 = await Promise.all([
+                    fetchServerStream('atlas', tmdbId, effectiveType, sNum, eNum, mediaTitle, releaseYear, releaseDate, latestDate, imdbId),
+                    fetchServerStream('ursa', tmdbId, effectiveType, sNum, eNum, mediaTitle, releaseYear, releaseDate, latestDate, imdbId)
+                ]);
 
-            await sleep(100);
+                await sleep(80);
 
-            var batch2 = await Promise.all([
-                fetchServerStream('daedalus', tmdbId, effectiveType, sNum, eNum, mediaTitle, releaseYear, releaseDate, latestDate, imdbId),
-                fetchServerStream('orion', tmdbId, effectiveType, sNum, eNum, mediaTitle, releaseYear, releaseDate, latestDate, imdbId),
-                fetchServerStream('andromeda', tmdbId, effectiveType, sNum, eNum, mediaTitle, releaseYear, releaseDate, latestDate, imdbId)
-            ]);
+                var batch2 = await Promise.all([
+                    fetchServerStream('daedalus', tmdbId, effectiveType, sNum, eNum, mediaTitle, releaseYear, releaseDate, latestDate, imdbId),
+                    fetchServerStream('orion', tmdbId, effectiveType, sNum, eNum, mediaTitle, releaseYear, releaseDate, latestDate, imdbId),
+                    fetchServerStream('andromeda', tmdbId, effectiveType, sNum, eNum, mediaTitle, releaseYear, releaseDate, latestDate, imdbId)
+                ]);
 
-            var orionData = batch2[1];
-            var extraDubs = [];
+                var orionData = batch2[1];
+                var extraDubs = [];
 
-            if (orionData && Array.isArray(orionData.dubs)) {
-                var audioDubs = orionData.dubs.filter(function(d) { return d && d.type === 0 && !d.original; }).slice(0, 6);
-                if (audioDubs.length > 0) {
-                    var dubFetches = audioDubs.map(function(dub) {
-                        return fetchServerStream('orion', tmdbId, effectiveType, sNum, eNum, mediaTitle, releaseYear, releaseDate, latestDate, imdbId, dub.lanCode, dub.type, orionData._tokenData)
-                            .then(function(res) {
-                                if (res && res.links && res.links[0]) {
-                                    return { dub: dub, data: res };
-                                }
-                                return null;
-                            }).catch(function() { return null; });
-                    });
-                    var dubRes = await Promise.all(dubFetches);
-                    for (var dr = 0; dr < dubRes.length; dr++) {
-                        if (dubRes[dr]) extraDubs.push(dubRes[dr]);
+                if (orionData && Array.isArray(orionData.dubs) && orionData._tokenData) {
+                    var prioritizedLangs = ['hi', 'es', 'fr', 'tl', 'ar'];
+                    var audioDubs = orionData.dubs.filter(function(d) {
+                        return d && d.type === 0 && !d.original;
+                    }).sort(function(a, b) {
+                        var aIdx = prioritizedLangs.indexOf(a.lanCode);
+                        var bIdx = prioritizedLangs.indexOf(b.lanCode);
+                        if (aIdx === -1) aIdx = 99;
+                        if (bIdx === -1) bIdx = 99;
+                        return aIdx - bIdx;
+                    }).slice(0, 3);
+
+                    if (audioDubs.length > 0) {
+                        var dubFetches = audioDubs.map(function(dub) {
+                            return fetchServerStream('orion', tmdbId, effectiveType, sNum, eNum, mediaTitle, releaseYear, releaseDate, latestDate, imdbId, dub.lanCode, dub.type, orionData._tokenData)
+                                .then(function(res) {
+                                    if (res && res.links && res.links[0]) {
+                                        return { dub: dub, data: res };
+                                    }
+                                    return null;
+                                }).catch(function() { return null; });
+                        });
+                        var dubRes = await Promise.all(dubFetches);
+                        for (var dr = 0; dr < dubRes.length; dr++) {
+                            if (dubRes[dr]) extraDubs.push(dubRes[dr]);
+                        }
                     }
                 }
-            }
 
-            return {
-                servers: [batch1[0], batch1[1], batch2[0], batch2[1], batch2[2]],
-                extraDubs: extraDubs
-            };
+                return {
+                    servers: [batch1[0], batch1[1], batch2[0], batch2[1], batch2[2]],
+                    extraDubs: extraDubs
+                };
+            } catch (vErr) {
+                console.error('[Freekz] Vidstuck pipeline error:', vErr);
+                return { servers: [], extraDubs: [] };
+            }
         })();
 
         var nativeRes = await nativePromise;
@@ -1233,7 +1256,7 @@ async function getStreams(tmdbId, mediaType, season, episode, extraArgs) {
                 if (browserApi) {
                     var resolveRes = await browserApi.resolve({
                         url: fallbackUrl,
-                        timeoutMs: 10000,
+                        timeoutMs: 4000,
                         autoClickServers: true
                     });
 
