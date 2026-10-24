@@ -215,15 +215,32 @@ async function resolvePixelCloud(pixelUrl) {
             headers: {
                 'User-Agent': DEFAULT_HEADERS['User-Agent'],
                 'Referer': 'https://gamerxyt.com/'
-            }
+            },
+            redirect: 'manual'
         }, 6000);
+        var loc = resp.headers && (resp.headers.get('location') || resp.headers.get('Location'));
+        if (loc) {
+            if (loc.indexOf('?link=') >= 0) {
+                return decodeURIComponent(loc.split('?link=')[1]);
+            }
+            if (loc.indexOf('googleusercontent.com') >= 0 || /^https?:\/\//i.test(loc)) {
+                return loc;
+            }
+        }
         var finalUrl = resp.url || '';
-        if (finalUrl.indexOf('video-downloads.googleusercontent.com') >= 0) {
+        if (finalUrl.indexOf('?link=') >= 0) {
+            return decodeURIComponent(finalUrl.split('?link=')[1]);
+        }
+        if (finalUrl.indexOf('video-downloads.googleusercontent.com') >= 0 || finalUrl.indexOf('googleusercontent.com') >= 0) {
             return finalUrl;
         }
-        var text = await resp.text();
-        var m = text.match(/href=['"](https:\/\/video-downloads\.googleusercontent\.com\/[^'"]+)['"]/i);
-        if (m) return m[1];
+        var cType = (resp.headers && resp.headers.get('content-type')) || '';
+        if (cType.toLowerCase().indexOf('text/html') >= 0) {
+            var text = await resp.text();
+            var m = text.match(/href=['"](https:\/\/video-downloads\.googleusercontent\.com\/[^'"]+)['"]/i) ||
+                    text.match(/href=['"](https:\/\/[^'"]*googleusercontent\.com\/[^'"]+)['"]/i);
+            if (m) return m[1];
+        }
     } catch (_) {}
     return pixelUrl;
 }
@@ -262,6 +279,7 @@ async function resolveHubCloud(hubUrl) {
 
         var servers = [];
         var seenUrls = {};
+        var asyncTasks = [];
 
         var pxlMatch = gText.match(/var\s+pxl\s*=\s*['"](https?:\/\/[^'"]*\/u\/([a-zA-Z0-9_-]+))['"]/i) ||
                        gText.match(/var\s+pxl\s*=\s*['"](https?:\/\/[^'"]*pixeldrain[^'"]*)['"]/i);
@@ -316,15 +334,23 @@ async function resolveHubCloud(hubUrl) {
                     headers: { 'User-Agent': DEFAULT_HEADERS['User-Agent'] }
                 });
             } else if (label.indexOf('10Gbps') >= 0 || href.indexOf('pixel.hubcloud.ist') >= 0 || href.indexOf('gpdl.hubcloud.ist') >= 0) {
-                var directPixel = await resolvePixelCloud(href);
-                servers.push({
-                    serverName: '10Gbps Pixel Cloud',
-                    displayName: 'Pixel Cloud (Google CDN)',
-                    url: directPixel,
-                    priority: 4,
-                    headers: { 'User-Agent': DEFAULT_HEADERS['User-Agent'] }
-                });
+                (function(h) {
+                    asyncTasks.push(resolvePixelCloud(h).then(function(directPixel) {
+                        if (directPixel) {
+                            servers.push({
+                                serverName: '10Gbps Pixel Cloud',
+                                displayName: 'Pixel Cloud (Google CDN)',
+                                url: directPixel,
+                                priority: 4,
+                                headers: { 'User-Agent': DEFAULT_HEADERS['User-Agent'] }
+                            });
+                        }
+                    }).catch(function() {}));
+                })(href);
             }
+        }
+        if (asyncTasks.length > 0) {
+            await Promise.all(asyncTasks);
         }
         return servers;
     } catch (_) {
@@ -551,14 +577,15 @@ async function resolveVgmlinks(vgmUrl, isMovie, seasonNum, episodeNum) {
                     }];
                 }
             } else if (nexRes && nexRes.hubUrls) {
-                var hubList = [];
-                for (var h = 0; h < nexRes.hubUrls.length; h++) {
-                    var srvs = await resolveHubCloud(nexRes.hubUrls[h]);
-                    hubList = hubList.concat(srvs.map(function(s) {
-                        return Object.assign({}, s, { quality: nexRes.quality });
-                    }));
-                }
-                return hubList;
+                var hubTasks = nexRes.hubUrls.map(function(hUrl) {
+                    return resolveHubCloud(hUrl).then(function(srvs) {
+                        return srvs.map(function(s) {
+                            return Object.assign({}, s, { quality: nexRes.quality });
+                        });
+                    }).catch(function() { return []; });
+                });
+                var hubBatches = await Promise.all(hubTasks);
+                return Array.prototype.concat.apply([], hubBatches);
             }
         }
     } catch (_) {}
@@ -639,13 +666,7 @@ async function getStreams(tmdbId, mediaType, season, episode, extraArgs) {
 
     var audioInfo = parseAudiosFromText(selected.title + ' ' + postHtml.slice(0, 5000));
     var subtitleList = [];
-    if (/ESub|MSub|Sub/i.test(selected.title) || /ESub|MSub/i.test(postHtml)) {
-        subtitleList.push({
-            id: 'vegamovies-sub-en',
-            name: 'English [Embedded/ESub]',
-            language: 'en'
-        });
-    }
+
 
     var streamPromises = [];
     var seenStreamKeys = {};
@@ -677,14 +698,15 @@ async function getStreams(tmdbId, mediaType, season, episode, extraArgs) {
                                 }];
                             }
                         } else if (result.hubUrls && result.hubUrls.length > 0) {
-                            var hubList = [];
-                            for (var h = 0; h < result.hubUrls.length; h++) {
-                                var srvs = await resolveHubCloud(result.hubUrls[h]);
-                                hubList = hubList.concat(srvs.map(function(s) {
-                                    return Object.assign({}, s, { quality: effectiveQuality });
-                                }));
-                            }
-                            return hubList;
+                            var hubTasks = result.hubUrls.map(function(hUrl) {
+                                return resolveHubCloud(hUrl).then(function(srvs) {
+                                    return srvs.map(function(s) {
+                                        return Object.assign({}, s, { quality: effectiveQuality });
+                                    });
+                                }).catch(function() { return []; });
+                            });
+                            var hubBatches = await Promise.all(hubTasks);
+                            return Array.prototype.concat.apply([], hubBatches);
                         }
                         return [];
                     })

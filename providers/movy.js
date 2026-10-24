@@ -128,8 +128,9 @@ function decryptPayload(cipherText, seed, tmdbId) {
     return decodeURIComponent(escape(str));
 }
 
-// Global seed cache
+// Global seed cache and in-flight request tracker
 const seedCache = new Map();
+const inFlightSeedRequests = new Map();
 
 async function fetchSeed(tmdbId, forceRefresh = false) {
     const now = Date.now();
@@ -138,25 +139,38 @@ async function fetchSeed(tmdbId, forceRefresh = false) {
         return cached.seed;
     }
 
-    const clientIp = '104.28.19.' + (Math.abs(Number(tmdbId) || 1) % 250 + 1);
-    const headers = Object.assign({}, DEFAULT_HEADERS, {
-        'X-Forwarded-For': clientIp
-    });
-
-    const res = await fetch(STREAM_API_URL + '/seed?mediaId=' + encodeURIComponent(tmdbId), { headers });
-    if (!res.ok) {
-        throw new Error('Failed to obtain seed: HTTP ' + res.status);
-    }
-    const data = await res.json();
-    if (!data || !data.seed) {
-        throw new Error('Empty seed returned from endpoint');
+    if (inFlightSeedRequests.has(tmdbId)) {
+        return inFlightSeedRequests.get(tmdbId);
     }
 
-    seedCache.set(tmdbId, {
-        seed: data.seed,
-        expiresAt: now + (data.ttlMs || 30000)
-    });
-    return data.seed;
+    const promise = (async () => {
+        try {
+            const clientIp = '104.28.19.' + (Math.abs(Number(tmdbId) || 1) % 250 + 1);
+            const headers = Object.assign({}, DEFAULT_HEADERS, {
+                'X-Forwarded-For': clientIp
+            });
+
+            const res = await fetch(STREAM_API_URL + '/seed?mediaId=' + encodeURIComponent(tmdbId), { headers });
+            if (!res.ok) {
+                throw new Error('Failed to obtain seed: HTTP ' + res.status);
+            }
+            const data = await res.json();
+            if (!data || !data.seed) {
+                throw new Error('Empty seed returned from endpoint');
+            }
+
+            seedCache.set(tmdbId, {
+                seed: data.seed,
+                expiresAt: Date.now() + (data.ttlMs || 30000)
+            });
+            return data.seed;
+        } finally {
+            inFlightSeedRequests.delete(tmdbId);
+        }
+    })();
+
+    inFlightSeedRequests.set(tmdbId, promise);
+    return promise;
 }
 
 // Dynamic language lookup dictionary
@@ -248,7 +262,7 @@ const SERVERS = [
     { name: 'Cancun', endpoint: 'cancun', dubbedLanguage: 'es' }
 ];
 
-async function queryServer(server, params, tmdbId, seed, timeoutMs) {
+async function queryServer(server, params, tmdbId, seed, timeoutMs, serverIndex) {
     const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
     let timer = null;
     if (controller) {
@@ -276,7 +290,8 @@ async function queryServer(server, params, tmdbId, seed, timeoutMs) {
         sp.set('seed', seed);
 
         const url = STREAM_API_URL + '/' + server.endpoint + '/sources?' + sp.toString();
-        const clientIp = '104.28.19.' + (Math.abs(Number(tmdbId) || 1) % 250 + 1);
+        const sIdx = (typeof serverIndex === 'number') ? serverIndex : 0;
+        const clientIp = '104.28.19.' + ((Math.abs(Number(tmdbId) || 1) + sIdx * 7) % 250 + 1);
         const headers = Object.assign({}, DEFAULT_HEADERS, {
             'X-Forwarded-For': clientIp
         });
@@ -490,7 +505,7 @@ async function getStreams(tmdbId, mediaType, season, episode) {
         }
 
         // Query all servers in parallel with 8s individual timeout
-        const serverPromises = SERVERS.map(srv => queryServer(srv, params, tmdbId, seed, 8000));
+        const serverPromises = SERVERS.map((srv, idx) => queryServer(srv, params, tmdbId, seed, 8000, idx));
         const serverResults = await Promise.all(serverPromises);
 
         const allStreams = [];

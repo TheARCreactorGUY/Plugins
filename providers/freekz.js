@@ -78,6 +78,13 @@ var MiniAes = (function() {
 function decryptLink(ciphertext) {
     if (!ciphertext || typeof ciphertext !== 'string') return '';
     try {
+        if (typeof globalThis !== 'undefined' && globalThis.CryptoJS && globalThis.CryptoJS.AES && typeof globalThis.CryptoJS.AES.decrypt === 'function') {
+            var bytes = globalThis.CryptoJS.AES.decrypt(ciphertext, AES_PASSPHRASE);
+            var dec = bytes.toString(globalThis.CryptoJS.enc.Utf8);
+            if (dec) return dec.trim();
+        }
+    } catch (_) {}
+    try {
         var dec = MiniAes.decrypt(ciphertext, AES_PASSPHRASE);
         return dec ? dec.trim() : '';
     } catch (e) {
@@ -116,7 +123,7 @@ function sleep(ms) {
 }
 
 /* --- Direct Subtitle Fetcher (No Token Needed) --- */
-async function fetchSubtitles(tmdbId, mediaType, season, episode, title, year, date) {
+async function fetchSubtitles(tmdbId, effectiveMediaType, season, episode, title, year, date) {
     try {
         var params = new URLSearchParams({
             [KEY_TMDB]: String(tmdbId),
@@ -208,13 +215,14 @@ async function getStreams(tmdbId, mediaType, season, episode, extraArgs) {
         var callArgs = (typeof globalThis !== 'undefined' && globalThis.__CALL_ARGS__) || {};
         extraArgs = Object.assign({}, callArgs, extraArgs || {});
 
-        var isMovie = mediaType === 'movie';
+        var effectiveMediaType = (mediaType === 'movie') ? 'movie' : 'tv';
+        var isMovie = effectiveMediaType === 'movie';
         var sNum = Number(season) || 1;
         var eNum = Number(episode) || 1;
         var epTag = 'S' + (sNum < 10 ? '0' : '') + sNum + 'E' + (eNum < 10 ? '0' : '') + eNum;
 
         // Check memory cache first
-        var cacheKey = String(tmdbId) + ':' + mediaType + ':' + sNum + ':' + eNum;
+        var cacheKey = String(tmdbId) + ':' + effectiveMediaType + ':' + sNum + ':' + eNum;
         var cached = STREAM_CACHE[cacheKey];
         if (cached && (Date.now() - cached.timestamp < CACHE_TTL_MS)) {
             return cached.streams;
@@ -228,7 +236,7 @@ async function getStreams(tmdbId, mediaType, season, episode, extraArgs) {
         // Resolve metadata if missing
         if (!mediaTitle || !releaseYear || !releaseDate) {
             try {
-                var detailsRes = await fetchWithTimeout(BACKEND_URL + '/backend/tmdb/details/' + mediaType + '/' + tmdbId + '?language=en-US', {
+                var detailsRes = await fetchWithTimeout(BACKEND_URL + '/backend/tmdb/details/' + effectiveMediaType + '/' + tmdbId + '?language=en-US', {
                     headers: DEFAULT_HEADERS
                 }, 4000);
                 if (detailsRes.ok) {
@@ -249,13 +257,13 @@ async function getStreams(tmdbId, mediaType, season, episode, extraArgs) {
         releaseDate = releaseDate || releaseYear + '-01-01';
 
         // 1. Fetch subtitles concurrently (no token needed)
-        var subtitlesPromise = fetchSubtitles(tmdbId, mediaType, sNum, eNum, mediaTitle, releaseYear, releaseDate);
+        var subtitlesPromise = fetchSubtitles(tmdbId, effectiveMediaType, sNum, eNum, mediaTitle, releaseYear, releaseDate);
 
         // 2. Batched Server Queries (Staggered to prevent HTTP 429 rate limiting)
         // Batch 1: Proven HLS CDN servers (Atlas, Ursa)
         var batch1 = await Promise.all([
-            fetchServerStream('atlas', tmdbId, mediaType, sNum, eNum, mediaTitle, releaseYear, releaseDate, imdbId),
-            fetchServerStream('ursa', tmdbId, mediaType, sNum, eNum, mediaTitle, releaseYear, releaseDate, imdbId)
+            fetchServerStream('atlas', tmdbId, effectiveMediaType, sNum, eNum, mediaTitle, releaseYear, releaseDate, imdbId),
+            fetchServerStream('ursa', tmdbId, effectiveMediaType, sNum, eNum, mediaTitle, releaseYear, releaseDate, imdbId)
         ]);
 
         // Stagger 60ms between server batches to respect rate limits
@@ -263,9 +271,9 @@ async function getStreams(tmdbId, mediaType, season, episode, extraArgs) {
 
         // Batch 2: Adaptive HLS & DASH servers (Daedalus, Orion, Andromeda)
         var batch2 = await Promise.all([
-            fetchServerStream('daedalus', tmdbId, mediaType, sNum, eNum, mediaTitle, releaseYear, releaseDate, imdbId),
-            fetchServerStream('orion', tmdbId, mediaType, sNum, eNum, mediaTitle, releaseYear, releaseDate, imdbId),
-            fetchServerStream('andromeda', tmdbId, mediaType, sNum, eNum, mediaTitle, releaseYear, releaseDate, imdbId)
+            fetchServerStream('daedalus', tmdbId, effectiveMediaType, sNum, eNum, mediaTitle, releaseYear, releaseDate, imdbId),
+            fetchServerStream('orion', tmdbId, effectiveMediaType, sNum, eNum, mediaTitle, releaseYear, releaseDate, imdbId),
+            fetchServerStream('andromeda', tmdbId, effectiveMediaType, sNum, eNum, mediaTitle, releaseYear, releaseDate, imdbId)
         ]);
 
         var serverResults = [

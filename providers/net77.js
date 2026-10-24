@@ -53,6 +53,27 @@ var cachedCookie = null;
 var cachedCookieExpiry = 0;
 var cachedApiBase = DEFAULT_API_BASE;
 
+function safeFetch(url, options, timeoutMs) {
+    timeoutMs = timeoutMs || 6000;
+    var timer;
+    var timeoutPromise = new Promise(function(_, reject) {
+        timer = setTimeout(function() {
+            reject(new Error('Request timed out (' + timeoutMs + 'ms): ' + url));
+        }, timeoutMs);
+    });
+
+    return Promise.race([
+        fetch(url, options),
+        timeoutPromise
+    ]).then(function(res) {
+        clearTimeout(timer);
+        return res;
+    }, function(err) {
+        clearTimeout(timer);
+        throw err;
+    });
+}
+
 function generateUUID() {
     return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
         var r = Math.random() * 16 | 0;
@@ -68,7 +89,7 @@ async function refreshApiBase() {
     for (var i = 0; i < API_DISCOVERY_HOSTS.length; i++) {
         try {
             var dUrl = API_DISCOVERY_HOSTS[i] + '/checknewtv.php';
-            var res = await fetch(dUrl, {
+            var res = await safeFetch(dUrl, {
                 headers: {
                     'X-Requested-With': 'NetmirrorNewTV v1.0',
                     'User-Agent': DEFAULT_HEADERS['User-Agent'],
@@ -99,7 +120,7 @@ async function getSessionCookie(forceRefresh) {
     try {
         var uuid = generateUUID();
         var formBody = 'g-recaptcha-response=' + encodeURIComponent(uuid);
-        var res = await fetch(VERIFY_URL, {
+        var res = await safeFetch(VERIFY_URL, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/x-www-form-urlencoded',
@@ -130,7 +151,7 @@ async function getSessionCookie(forceRefresh) {
 /**
  * Parses Master HLS playlist to extract audio tracks, subtitles, and max resolution.
  */
-function parseMasterPlaylist(m3u8Text) {
+function parseMasterPlaylist(m3u8Text, baseUrl) {
     var audios = [];
     var subs = [];
     var lines = m3u8Text.split('\n');
@@ -153,7 +174,20 @@ function parseMasterPlaylist(m3u8Text) {
             var sLang = subLangMatch ? subLangMatch[1].trim() : '';
             if (uriMatch) {
                 // Convert .m3u8 playlist wrapper into direct .vtt file
-                var directVtt = uriMatch[1].replace(/\.m3u8$/, '.vtt');
+                var rawVtt = uriMatch[1].replace(/\.m3u8(?=\?|$)/i, '.vtt');
+                var directVtt = rawVtt;
+                if (!/^https?:\/\//i.test(rawVtt) && baseUrl) {
+                    try {
+                        directVtt = new URL(rawVtt, baseUrl).href;
+                    } catch (_) {
+                        if (rawVtt.charAt(0) === '/') {
+                            var m = baseUrl.match(/^(https?:\/\/[^\/]+)/);
+                            directVtt = m ? m[1] + rawVtt : rawVtt;
+                        } else {
+                            directVtt = baseUrl.replace(/\/[^\/]*$/, '/') + rawVtt;
+                        }
+                    }
+                }
                 subs.push({
                     lang: sName || sLang || 'English',
                     url: directVtt
@@ -207,7 +241,7 @@ async function resolveMetadata(tmdbId, mediaType, extraArgs) {
     if (!title) {
         try {
             var tmdbType = mediaType === 'movie' ? 'movie' : 'tv';
-            var res = await fetch(TMDB_PROXY_URL + '/' + tmdbType + '/' + tmdbId + '?language=en-US');
+            var res = await safeFetch(TMDB_PROXY_URL + '/' + tmdbType + '/' + tmdbId + '?language=en-US');
             if (res.ok) {
                 var data = await res.json();
                 title = data.title || data.name || '';
@@ -245,12 +279,12 @@ async function searchAndResolveOtt(ott, meta, isMovie, season, episode, cookie) 
     var searchUrl = cachedApiBase + '/newtv/search.php?s=' + encodeURIComponent(cleanTitle);
 
     try {
-        var sRes = await fetch(searchUrl, { headers: headers });
+        var sRes = await safeFetch(searchUrl, { headers: headers });
         if (!sRes.ok) {
             // Check if API base changed
             await refreshApiBase();
             searchUrl = cachedApiBase + '/newtv/search.php?s=' + encodeURIComponent(cleanTitle);
-            sRes = await fetch(searchUrl, { headers: headers });
+            sRes = await safeFetch(searchUrl, { headers: headers });
             if (!sRes.ok) return null;
         }
 
@@ -271,7 +305,7 @@ async function searchAndResolveOtt(ott, meta, isMovie, season, episode, cookie) 
             for (var c = 0; c < candidates.length; c++) {
                 var cand = candidates[c];
                 var postUrl = cachedApiBase + '/newtv/post.php?id=' + cand.id;
-                var postRes = await fetch(postUrl, { headers: headers });
+                var postRes = await safeFetch(postUrl, { headers: headers });
                 if (!postRes.ok) continue;
                 var postJson = await postRes.json();
 
@@ -289,7 +323,7 @@ async function searchAndResolveOtt(ott, meta, isMovie, season, episode, cookie) 
                 // Determine target pagination (NetMirror serves 10 episodes per page)
                 var targetPage = Math.max(1, Math.floor((episode - 1) / 10) + 1);
                 var epUrl = cachedApiBase + '/newtv/episodes.php?id=' + targetSeason.id + '&page=' + targetPage;
-                var epRes = await fetch(epUrl, { headers: headers });
+                var epRes = await safeFetch(epUrl, { headers: headers });
                 var epJson = epRes.ok ? await epRes.json() : {};
                 var epList = epJson.episodes || [];
 
@@ -301,7 +335,7 @@ async function searchAndResolveOtt(ott, meta, isMovie, season, episode, cookie) 
                 // Fallback to page 1 if not found on calculated targetPage
                 if (!matchedEp && targetPage !== 1) {
                     var p1Url = cachedApiBase + '/newtv/episodes.php?id=' + targetSeason.id + '&page=1';
-                    var p1Res = await fetch(p1Url, { headers: headers });
+                    var p1Res = await safeFetch(p1Url, { headers: headers });
                     if (p1Res.ok) {
                         var p1Json = await p1Res.json();
                         var p1List = p1Json.episodes || [];
@@ -323,7 +357,7 @@ async function searchAndResolveOtt(ott, meta, isMovie, season, episode, cookie) 
 
         // Query player.php for the signed master playlist
         var playerUrl = cachedApiBase + '/newtv/player.php?id=' + playId;
-        var pRes = await fetch(playerUrl, { headers: headers });
+        var pRes = await safeFetch(playerUrl, { headers: headers });
         if (!pRes.ok) return null;
         var pJson = await pRes.json();
 
@@ -335,7 +369,7 @@ async function searchAndResolveOtt(ott, meta, isMovie, season, episode, cookie) 
                 var freshRaw = decodeURIComponent(freshCookie.replace(/^t_hash_t=/, ''));
                 headers['Cookie'] = freshCookie;
                 headers['Usertoken'] = freshRaw;
-                pRes = await fetch(playerUrl, { headers: headers });
+                pRes = await safeFetch(playerUrl, { headers: headers });
                 if (pRes.ok) {
                     pJson = await pRes.json();
                 }
@@ -347,7 +381,7 @@ async function searchAndResolveOtt(ott, meta, isMovie, season, episode, cookie) 
         // Fetch master m3u8 playlist to inspect audio tracks and subtitles
         var playlistInfo = { badge: '[MULTI]', primaryTag: 'multi', quality: '1080p', subs: [] };
         try {
-            var plRes = await fetch(pJson.video_link, {
+            var plRes = await safeFetch(pJson.video_link, {
                 headers: {
                     'User-Agent': DEFAULT_HEADERS['User-Agent'],
                     'Referer': VERIFY_BASE + '/',
@@ -356,13 +390,13 @@ async function searchAndResolveOtt(ott, meta, isMovie, season, episode, cookie) 
             });
             if (plRes.ok) {
                 var plText = await plRes.text();
-                playlistInfo = parseMasterPlaylist(plText);
+                playlistInfo = parseMasterPlaylist(plText, pJson.video_link);
             }
         } catch (e) {
             console.warn('[Net77] Master playlist probe warning:', e.message);
         }
 
-        var epTag = !isMovie ? ('S' + String(season).padStart(2, '0') + 'E' + String(episode).padStart(2, '0')) : '';
+        var epTag = !isMovie ? ('S' + (season < 10 ? '0' : '') + season + 'E' + (episode < 10 ? '0' : '') + episode) : '';
         var streamTitle = isMovie
             ? (meta.title + ' (' + meta.year + ') ' + playlistInfo.badge + ' - Net77 ' + ott.name + ' [' + playlistInfo.quality + ']')
             : (meta.title + ' ' + epTag + ' ' + playlistInfo.badge + ' - Net77 ' + ott.name + ' [' + playlistInfo.quality + ']');

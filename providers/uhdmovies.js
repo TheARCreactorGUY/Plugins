@@ -294,18 +294,27 @@ async function resolveDriveSeed(driveSeedRUrl) {
         headers: {
             'User-Agent': USER_AGENT,
             'Referer': 'https://en.thenaukriadda.in/'
-        }
+        },
+        redirect: 'manual'
     }, 7000);
-    var html5 = await resp5.text();
-
-    var fileRedirectMatch = html5.match(/window\.location\.replace\(\s*['"](\/file\/[^'"]+)['"]\s*\)/i) ||
-                           html5.match(/['"](\/file\/[a-zA-Z0-9_-]+)['"]/i);
+    var loc5 = resp5.headers && (resp5.headers.get('location') || resp5.headers.get('Location'));
     var fileUrl = '';
-    if (fileRedirectMatch) {
-        fileUrl = 'https://driveseed.org' + fileRedirectMatch[1];
-    } else if (resp5.url && resp5.url.indexOf('/file/') !== -1) {
-        fileUrl = resp5.url;
+    if (loc5 && loc5.indexOf('/file/') !== -1) {
+        fileUrl = loc5.startsWith('http') ? loc5 : ('https://driveseed.org' + loc5);
     } else {
+        var cType5 = (resp5.headers && resp5.headers.get('content-type')) || '';
+        if (cType5.toLowerCase().indexOf('text/html') !== -1) {
+            var html5 = await resp5.text();
+            var fileRedirectMatch = html5.match(/window\.location\.replace\(\s*['"](\/file\/[^'"]+)['"]\s*\)/i) ||
+                                   html5.match(/['"](\/file\/[a-zA-Z0-9_-]+)['"]/i);
+            if (fileRedirectMatch) {
+                fileUrl = 'https://driveseed.org' + fileRedirectMatch[1];
+            } else if (resp5.url && resp5.url.indexOf('/file/') !== -1) {
+                fileUrl = resp5.url;
+            }
+        }
+    }
+    if (!fileUrl) {
         throw new Error('DriveSeed /file/ URL not found');
     }
 
@@ -328,20 +337,27 @@ async function resolveDriveSeed(driveSeedRUrl) {
         headers: {
             'User-Agent': USER_AGENT,
             'Referer': fileUrl
-        }
+        },
+        redirect: 'manual'
     }, 8000);
-    var finalUrl7 = resp7.url || '';
+    var loc7 = resp7.headers && (resp7.headers.get('location') || resp7.headers.get('Location'));
+    var finalUrl7 = loc7 || resp7.url || '';
 
     var streamUrl = null;
     if (finalUrl7.indexOf('?url=') !== -1) {
         streamUrl = decodeURIComponent(finalUrl7.split('?url=')[1]);
-    } else if (finalUrl7.indexOf('video-downloads.googleusercontent.com') !== -1) {
+    } else if (finalUrl7.indexOf('googleusercontent.com') !== -1) {
         streamUrl = finalUrl7;
     } else {
-        var html7 = await resp7.text();
-        var urlParamMatch = html7.match(/['"](https:\/\/video-downloads\.googleusercontent\.com\/[^'"]+)['"]/i);
-        if (urlParamMatch) {
-            streamUrl = urlParamMatch[1];
+        var cType7 = (resp7.headers && resp7.headers.get('content-type')) || '';
+        if (cType7.toLowerCase().indexOf('text/html') !== -1) {
+            var html7 = await resp7.text();
+            var urlParamMatch = html7.match(/['"](https:\/\/[^'"]*googleusercontent\.com\/[^'"]+)['"]/i);
+            if (urlParamMatch) {
+                streamUrl = urlParamMatch[1];
+            }
+        } else if (/^https?:\/\//i.test(finalUrl7)) {
+            streamUrl = finalUrl7;
         }
     }
 
@@ -428,8 +444,7 @@ function extractTvLinks(fullHtml, seasonNum, episodeNum, postTitle) {
         }
     }
 
-    var targetEpStr = 'Episode ' + episodeNum;
-    var targetEpAlt = 'Episode 0' + episodeNum;
+    var epRegex = new RegExp('(?:^|\\b)(?:episode|ep|e)[\\s.]*0*' + episodeNum + '(?:\\b|\\D|$)', 'i');
 
     var linkRegex = /<a[^>]+href=["'](https:\/\/[^"']*thenaukriadda[^"']*)["'][^>]*>([\s\S]*?)<\/a>/gi;
     var candidates = [];
@@ -440,10 +455,8 @@ function extractTvLinks(fullHtml, seasonNum, episodeNum, postTitle) {
         var linkText = m[2].replace(/<[^>]+>/g, '').trim();
         var lowerLink = linkText.toLowerCase();
 
-        if (lowerLink === targetEpStr.toLowerCase() ||
-            lowerLink === targetEpAlt.toLowerCase() ||
-            lowerLink === 'e' + episodeNum ||
-            lowerLink === 'e0' + episodeNum) {
+        var isBatch = /\b(batch|zip|pack)\b/i.test(lowerLink);
+        if (!isBatch && epRegex.test(lowerLink)) {
 
             var idx = m.index;
             var start = Math.max(0, idx - 400);

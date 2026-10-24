@@ -231,11 +231,32 @@ async function resolvePixelCloud(pixelUrl) {
             headers: {
                 'User-Agent': DEFAULT_HEADERS['User-Agent'],
                 'Referer': 'https://gamerxyt.com/'
-            }
+            },
+            redirect: 'manual'
         }, 6000);
-        var text = await resp.text();
-        var m = text.match(/href=['"](https:\/\/video-downloads\.googleusercontent\.com\/[^'"]+)['"]/i);
-        if (m) return m[1];
+        var loc = resp.headers && (resp.headers.get('location') || resp.headers.get('Location'));
+        if (loc) {
+            if (loc.indexOf('?link=') >= 0) {
+                return decodeURIComponent(loc.split('?link=')[1]);
+            }
+            if (loc.indexOf('googleusercontent.com') >= 0 || /^https?:\/\//i.test(loc)) {
+                return loc;
+            }
+        }
+        var finalUrl = resp.url || '';
+        if (finalUrl.indexOf('?link=') >= 0) {
+            return decodeURIComponent(finalUrl.split('?link=')[1]);
+        }
+        if (finalUrl.indexOf('video-downloads.googleusercontent.com') >= 0 || finalUrl.indexOf('googleusercontent.com') >= 0) {
+            return finalUrl;
+        }
+        var cType = (resp.headers && resp.headers.get('content-type')) || '';
+        if (cType.toLowerCase().indexOf('text/html') >= 0) {
+            var text = await resp.text();
+            var m = text.match(/href=['"](https:\/\/video-downloads\.googleusercontent\.com\/[^'"]+)['"]/i) ||
+                    text.match(/href=['"](https:\/\/[^'"]*googleusercontent\.com\/[^'"]+)['"]/i);
+            if (m) return m[1];
+        }
     } catch (_) {}
     return pixelUrl;
 }
@@ -272,6 +293,7 @@ async function resolveHubCloud(hubUrl) {
 
         var servers = [];
         var seenUrls = {};
+        var asyncTasks = [];
 
         // 1. Dynamic Pixeldrain extraction
         var pxlMatch = gText.match(/var\s+pxl\s*=\s*['"](https?:\/\/[^'"]*\/u\/([a-zA-Z0-9_-]+))['"]/i) ||
@@ -327,15 +349,23 @@ async function resolveHubCloud(hubUrl) {
                     headers: { 'User-Agent': DEFAULT_HEADERS['User-Agent'] }
                 });
             } else if (label.indexOf('10Gbps') >= 0 || href.indexOf('pixel.hubcloud.ist') >= 0 || href.indexOf('gpdl.hubcloud.ist') >= 0) {
-                var directPixel = await resolvePixelCloud(href);
-                servers.push({
-                    serverName: '10Gbps Pixel Cloud',
-                    displayName: 'Pixel Cloud (Google CDN)',
-                    url: directPixel,
-                    priority: 4,
-                    headers: { 'User-Agent': DEFAULT_HEADERS['User-Agent'] }
-                });
+                (function(h) {
+                    asyncTasks.push(resolvePixelCloud(h).then(function(directPixel) {
+                        if (directPixel) {
+                            servers.push({
+                                serverName: '10Gbps Pixel Cloud',
+                                displayName: 'Pixel Cloud (Google CDN)',
+                                url: directPixel,
+                                priority: 4,
+                                headers: { 'User-Agent': DEFAULT_HEADERS['User-Agent'] }
+                            });
+                        }
+                    }).catch(function() {}));
+                })(href);
             }
+        }
+        if (asyncTasks.length > 0) {
+            await Promise.all(asyncTasks);
         }
         return servers;
     } catch (_) {
@@ -524,6 +554,7 @@ async function resolveFastDlServer(fastDlUrl) {
 
                 var gRegex = /<a[^>]+href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi;
                 var gm;
+                var asyncGdfTasks = [];
                 while ((gm = gRegex.exec(gdfHtml)) !== null) {
                     var gHref = gm[1];
                     var gText = gm[2].replace(/<[^>]+>/g, '').trim();
@@ -531,17 +562,20 @@ async function resolveFastDlServer(fastDlUrl) {
 
                     if (gHref.indexOf('fast-dl.one') >= 0) {
                         seenGdf[gHref] = true;
-                        var cdn = await resolveFastDlOne(gHref);
-                        if (cdn && !seenGdf[cdn]) {
-                            seenGdf[cdn] = true;
-                            gdfServers.push({
-                                serverName: '10Gbps Google CDN',
-                                displayName: 'Google Cloud CDN',
-                                url: cdn,
-                                priority: 1,
-                                headers: { 'User-Agent': DEFAULT_HEADERS['User-Agent'] }
-                            });
-                        }
+                        (function(h) {
+                            asyncGdfTasks.push(resolveFastDlOne(h).then(function(cdn) {
+                                if (cdn && !seenGdf[cdn]) {
+                                    seenGdf[cdn] = true;
+                                    gdfServers.push({
+                                        serverName: '10Gbps Google CDN',
+                                        displayName: 'Google Cloud CDN',
+                                        url: cdn,
+                                        priority: 1,
+                                        headers: { 'User-Agent': DEFAULT_HEADERS['User-Agent'] }
+                                    });
+                                }
+                            }).catch(function() {}));
+                        })(gHref);
                     } else if (/r2\.cloudflarestorage\.com|r2\.dev/i.test(gHref)) {
                         seenGdf[gHref] = true;
                         gdfServers.push({
@@ -581,9 +615,17 @@ async function resolveFastDlServer(fastDlUrl) {
                         });
                     } else if (/hubcloud|gamerxyt/i.test(gHref)) {
                         seenGdf[gHref] = true;
-                        var hubS = await resolveHubCloud(gHref);
-                        gdfServers = gdfServers.concat(hubS);
+                        (function(h) {
+                            asyncGdfTasks.push(resolveHubCloud(h).then(function(hubS) {
+                                if (hubS && hubS.length) {
+                                    gdfServers = gdfServers.concat(hubS);
+                                }
+                            }).catch(function() {}));
+                        })(gHref);
                     }
+                }
+                if (asyncGdfTasks.length > 0) {
+                    await Promise.all(asyncGdfTasks);
                 }
             }
             if (gdfServers.length > 0) return gdfServers;
@@ -606,6 +648,7 @@ async function resolveLinksMod(linksModUrl) {
         var text = await res.text();
         var servers = [];
         var seenUrls = {};
+        var asyncTasks = [];
 
         var aRegex = /<a[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi;
         var m;
@@ -668,6 +711,9 @@ async function resolveLinksMod(linksModUrl) {
                 });
             }
         }
+        if (asyncTasks.length > 0) {
+            await Promise.all(asyncTasks);
+        }
         return servers;
     } catch (_) {
         return [];
@@ -678,32 +724,67 @@ async function resolveLinksMod(linksModUrl) {
  * Searches Bollyflix.
  */
 async function searchBollyflix(query) {
-    try {
-        var url = BASE_URL + '/?s=' + encodeURIComponent(query);
-        var res = await safeFetch(url, { headers: DEFAULT_HEADERS }, 7000);
-        if (!res.ok) return [];
-        var text = await res.text();
+    var searchBases = [BASE_URL].concat(BACKUP_URLS);
+    var seenBases = {};
 
-        var articles = text.match(/<article[\s\S]*?<\/article>/gi) || [];
-        var results = [];
+    async function trySearchOnBase(currentBase) {
+        if (!currentBase || seenBases[currentBase]) return null;
+        seenBases[currentBase] = true;
+        try {
+            var searchUrl = currentBase.replace(/\/$/, '') + '/?s=' + encodeURIComponent(query);
+            var res = await safeFetch(searchUrl, {
+                headers: {
+                    'User-Agent': DEFAULT_HEADERS['User-Agent'],
+                    'Referer': currentBase + '/'
+                }
+            }, 7000);
+            if (!res.ok) return null;
+            var text = await res.text();
 
-        for (var i = 0; i < articles.length; i++) {
-            var art = articles[i];
-            var linkMatch = art.match(/href="([^"]+)"/);
-            var titleMatch = art.match(/alt="([^"]+)"/) || art.match(/title="([^"]+)"/);
-            if (linkMatch && titleMatch) {
-                var rawTitle = titleMatch[1].replace(/<[^>]+>/g, '').trim();
-                results.push({
-                    url: linkMatch[1],
-                    title: rawTitle,
-                    clean: cleanTitle(rawTitle)
-                });
+            var articles = text.match(/<article[\s\S]*?<\/article>/gi) || [];
+            if (articles.length === 0) return null;
+
+            var results = [];
+            for (var i = 0; i < articles.length; i++) {
+                var art = articles[i];
+                var linkMatch = art.match(/href="([^"]+)"/);
+                var titleMatch = art.match(/alt="([^"]+)"/) || art.match(/title="([^"]+)"/);
+                if (linkMatch && titleMatch) {
+                    var rawTitle = titleMatch[1].replace(/<[^>]+>/g, '').trim();
+                    results.push({
+                        url: linkMatch[1],
+                        title: rawTitle,
+                        clean: cleanTitle(rawTitle)
+                    });
+                }
             }
+            return results.length > 0 ? results : null;
+        } catch (_) {
+            return null;
         }
-        return results;
-    } catch (_) {
-        return [];
     }
+
+    for (var b = 0; b < searchBases.length; b++) {
+        var res = await trySearchOnBase(searchBases[b]);
+        if (res && res.length > 0) return res;
+    }
+
+    // Fallback to DYNAMIC_URLS_ENDPOINT if all hardcoded mirrors fail
+    if (typeof DYNAMIC_URLS_ENDPOINT !== 'undefined' && DYNAMIC_URLS_ENDPOINT) {
+        try {
+            var dynRes = await safeFetch(DYNAMIC_URLS_ENDPOINT, { headers: { 'User-Agent': USER_AGENT } }, 5000);
+            if (dynRes.ok) {
+                var dynData = await dynRes.json();
+                var dynUrl = dynData && dynData.bollyflix;
+                if (dynUrl) {
+                    var dynResults = await trySearchOnBase(dynUrl);
+                    if (dynResults && dynResults.length > 0) return dynResults;
+                }
+            }
+        } catch (_) {}
+    }
+
+    return [];
 }
 
 /**
@@ -773,13 +854,7 @@ async function getStreams(tmdbId, mediaType, season, episode, extraArgs) {
 
     var audioInfo = parseAudiosFromText(selected.title + ' ' + postHtml.slice(0, 5000));
     var subtitleList = [];
-    if (/ESub|MSub|Sub/i.test(selected.title) || /ESub|MSub/i.test(postHtml)) {
-        subtitleList.push({
-            id: 'bollyflix-sub-en',
-            name: 'English [Embedded/ESub]',
-            language: 'en'
-        });
-    }
+
 
     var streamPromises = [];
     var seenStreamKeys = {};
