@@ -22,8 +22,9 @@
 /* =========================================================================
    CONFIG BLOCK: If site changes domain, update ONLY the URLs in this block.
    ========================================================================= */
-var BASE_URL = 'https://cinevood.dog';
+var BASE_URL = 'https://cinevood.courses';
 var BACKUP_URLS = [
+    'https://cinevood.courses',
     'https://cinevood.dog',
     'https://cinevood.garden',
     'https://cinevood.hair',
@@ -651,7 +652,7 @@ async function searchCinevood(query) {
         seenBases[currentBase] = true;
 
         try {
-            var searchUrl = currentBase + '/page/1/?s=' + encodeURIComponent(query);
+            var searchUrl = currentBase + '/?s=' + encodeURIComponent(query);
             var res = await safeFetch(searchUrl, {
                 headers: {
                     'User-Agent': DEFAULT_HEADERS['User-Agent'],
