@@ -69,11 +69,15 @@ function cleanTitle(t) {
 }
 
 function parseQuality(text) {
-    var lower = String(text || '').toLowerCase();
-    if (lower.indexOf('2160p') !== -1 || lower.indexOf('4k') !== -1 || lower.indexOf('uhd') !== -1) return '2160p';
-    if (lower.indexOf('1080p') !== -1 || lower.indexOf('fhd') !== -1) return '1080p';
-    if (lower.indexOf('720p') !== -1 || lower.indexOf('hd') !== -1) return '720p';
-    if (lower.indexOf('480p') !== -1 || lower.indexOf('sd') !== -1) return '480p';
+    var raw = String(text || '').toLowerCase();
+    var lower = raw
+        .replace(/\bds4k\b/g, '')
+        .replace(/4k\s*remaster(?:ed)?/g, '');
+    if (lower.indexOf('2160p') !== -1) return '2160p';
+    if (lower.indexOf('1080p') !== -1 || /\bfhd\b/.test(lower)) return '1080p';
+    if (lower.indexOf('720p') !== -1 || /\bhd\b(?!\s*r\b)/.test(lower.replace(/\bhdr(?:10(?:\+)?)?\b/g, ''))) return '720p';
+    if (lower.indexOf('480p') !== -1 || /\bsd\b/.test(lower)) return '480p';
+    if (/\b(?:4k|uhd)\b/.test(lower)) return '2160p';
     return '1080p';
 }
 
@@ -551,14 +555,20 @@ async function getStreams(tmdbId, mediaType, season, episode, extraArgs) {
 
                 var serverName = 'UHDMovies | Google CDN • ' + c.audio + ' (' + c.quality + ')';
 
+                var isHls = streamUrl.indexOf('.m3u8') >= 0;
+                var isMkv = streamUrl.indexOf('.mkv') >= 0;
+                var streamFormat = isHls ? 'm3u8' : (isMkv ? 'mkv' : 'mp4');
+
                 return {
                     name: serverName,
                     title: streamTitle,
                     url: streamUrl,
                     quality: c.quality,
                     size: c.size || (isMovie ? '2.5 GB' : '1.2 GB'),
-                    type: 'mp4',
-                    format: 'mp4',
+                    type: streamFormat === 'mkv' ? 'mp4' : streamFormat,
+                    format: streamFormat,
+                    container: streamFormat,
+                    isSequential: streamFormat === 'mp4' || streamFormat === 'mkv',
                     provider: 'uhdmovies',
                     headers: {
                         'User-Agent': USER_AGENT

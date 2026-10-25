@@ -824,16 +824,20 @@ async function getStreams(tmdbId, mediaType, season, episode, extraArgs) {
                 (meta.title + ' (' + meta.year + ') ' + audioInfo.badge + ' - Vegamovies ' + item.displayName + ' [' + item.quality + ']') :
                 (meta.title + ' ' + epTag + ' ' + audioInfo.badge + ' - Vegamovies ' + item.displayName + ' [' + item.quality + ']');
 
-            var streamFormat = item.url.indexOf('.m3u8') >= 0 ? 'm3u8' :
-                               (item.url.indexOf('.mpd') >= 0 ? 'mpd' : 'mp4');
+            var isHls = item.url.indexOf('.m3u8') >= 0;
+            var isDASH = item.url.indexOf('.mpd') >= 0;
+            var isMkv = item.url.indexOf('.mkv') >= 0;
+            var streamFormat = isHls ? 'm3u8' : (isDASH ? 'mpd' : (isMkv ? 'mkv' : 'mp4'));
 
             finalStreams.push({
                 name: 'Vegamovies | ' + item.serverName + ' • ' + audioInfo.badge + ' (' + item.quality + ')',
                 title: finalTitle,
                 url: item.url,
                 quality: item.quality,
-                type: streamFormat,
+                type: streamFormat === 'mkv' ? 'mp4' : streamFormat,
                 format: streamFormat,
+                container: streamFormat,
+                isSequential: streamFormat === 'mp4' || streamFormat === 'mkv',
                 provider: 'vegamovies',
                 language: (audioInfo.tag || 'hin').toLowerCase(),
                 headers: item.headers || { 'User-Agent': DEFAULT_HEADERS['User-Agent'] },

@@ -634,16 +634,7 @@ async function resolveFastDlServer(fastDlUrl) {
                     await Promise.all(asyncGdfTasks);
                 }
             }
-            if (gdfServers.length > 0) return gdfServers;
-            if (loc) {
-                return [{
-                    serverName: 'GDFlix Cloud',
-                    displayName: 'GDFlix Cloud Stream',
-                    url: loc,
-                    priority: 2,
-                    headers: { 'User-Agent': DEFAULT_HEADERS['User-Agent'], 'Referer': 'https://bollyflix.co.za/' }
-                }];
-            }
+            return gdfServers;
         }
     } catch (_) {}
     return [];
@@ -736,42 +727,6 @@ async function resolveLinksMod(linksModUrl) {
                     displayName: 'ZipDisk Server',
                     url: href,
                     priority: 3,
-                    headers: { 'User-Agent': DEFAULT_HEADERS['User-Agent'] }
-                });
-            } else if (href.indexOf('dgdrive.xyz') >= 0) {
-                seenUrls[href] = true;
-                servers.push({
-                    serverName: 'DGDrive',
-                    displayName: 'DGDrive Mirror',
-                    url: href,
-                    priority: 4,
-                    headers: { 'User-Agent': DEFAULT_HEADERS['User-Agent'] }
-                });
-            } else if (href.indexOf('desiupload') >= 0) {
-                seenUrls[href] = true;
-                servers.push({
-                    serverName: 'DesiUpload',
-                    displayName: 'DesiUpload Mirror',
-                    url: href,
-                    priority: 5,
-                    headers: { 'User-Agent': DEFAULT_HEADERS['User-Agent'] }
-                });
-            } else if (href.indexOf('multiup.org') >= 0) {
-                seenUrls[href] = true;
-                servers.push({
-                    serverName: 'MultiUp',
-                    displayName: 'MultiUp Mirror',
-                    url: href,
-                    priority: 6,
-                    headers: { 'User-Agent': DEFAULT_HEADERS['User-Agent'] }
-                });
-            } else if (href.indexOf('send.cm') >= 0) {
-                seenUrls[href] = true;
-                servers.push({
-                    serverName: 'Send.cm',
-                    displayName: 'Send.cm Mirror',
-                    url: href,
-                    priority: 7,
                     headers: { 'User-Agent': DEFAULT_HEADERS['User-Agent'] }
                 });
             }
@@ -1103,16 +1058,20 @@ async function getStreams(tmdbId, mediaType, season, episode, extraArgs) {
                 (meta.title + ' (' + meta.year + ') ' + audioInfo.badge + ' - Bollyflix ' + item.displayName + ' [' + item.quality + ']') :
                 (meta.title + ' ' + epTag + ' ' + audioInfo.badge + ' - Bollyflix ' + item.displayName + ' [' + item.quality + ']');
 
-            var streamFormat = item.url.indexOf('.m3u8') >= 0 ? 'm3u8' :
-                               (item.url.indexOf('.mpd') >= 0 ? 'mpd' : 'mp4');
+            var isHls = item.url.indexOf('.m3u8') >= 0;
+            var isDASH = item.url.indexOf('.mpd') >= 0;
+            var isMkv = item.url.indexOf('.mkv') >= 0;
+            var streamFormat = isHls ? 'm3u8' : (isDASH ? 'mpd' : (isMkv ? 'mkv' : 'mp4'));
 
             finalStreams.push({
                 name: 'Bollyflix | ' + item.serverName + ' • ' + audioInfo.badge + ' (' + item.quality + ')',
                 title: finalTitle,
                 url: item.url,
                 quality: item.quality,
-                type: streamFormat,
+                type: streamFormat === 'mkv' ? 'mp4' : streamFormat,
                 format: streamFormat,
+                container: streamFormat,
+                isSequential: streamFormat === 'mp4' || streamFormat === 'mkv',
                 provider: 'bollyflix',
                 language: (audioInfo.tag || 'hin').toLowerCase(),
                 headers: item.headers || { 'User-Agent': DEFAULT_HEADERS['User-Agent'] },

@@ -408,8 +408,9 @@ async function fetchNativeStreams(candidate, isTv, season, episode, mediaTitle, 
             if (pData && pData.data && Array.isArray(pData.data.streams)) {
                 var sortedPlay = pData.data.streams.filter(function(s) { return s && s.url && s.url.indexOf('http') === 0; })
                     .sort(function(a, b) { return (Number(b.resolutions) || 0) - (Number(a.resolutions) || 0); });
-                if (sortedPlay.length > 0) {
-                    var s = sortedPlay[0];
+                for (var pi = 0; pi < sortedPlay.length; pi++) {
+                    var s = sortedPlay[pi];
+                    if (!s || !s.url || seenUrls[s.url]) continue;
                     seenUrls[s.url] = true;
                     var qual = s.resolutions ? (s.resolutions + 'p') : '1080p';
                     var streamTitle = isTv
@@ -445,8 +446,9 @@ async function fetchNativeStreams(candidate, isTv, season, episode, mediaTitle, 
             if (dData && dData.data && Array.isArray(dData.data.downloads)) {
                 var sortedDl = dData.data.downloads.filter(function(d) { return d && d.url && d.url.indexOf('http') === 0 && !seenUrls[d.url]; })
                     .sort(function(a, b) { return (Number(b.resolution) || 0) - (Number(a.resolution) || 0); });
-                if (sortedDl.length > 0) {
-                    var d = sortedDl[0];
+                for (var di = 0; di < sortedDl.length; di++) {
+                    var d = sortedDl[di];
+                    if (!d || !d.url || seenUrls[d.url]) continue;
                     seenUrls[d.url] = true;
                     var dQual = d.resolution ? (d.resolution + 'p') : '1080p';
                     var dTitle = isTv

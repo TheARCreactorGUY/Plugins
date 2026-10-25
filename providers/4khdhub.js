@@ -566,6 +566,10 @@ async function getStreams(tmdbId, mediaType, season, episode, extraArgs) {
                         rel.rawTitle.match(/(\d+(?:\.\d+)?\s*(?:GB|MB))/i);
         var parsedSize = sizeMatch ? sizeMatch[1].trim() : (isMovie ? '2.5 GB' : '950 MB');
 
+        var isHls = srv.url.indexOf('.m3u8') >= 0;
+        var isMkv = srv.url.indexOf('.mkv') >= 0;
+        var streamFormat = isHls ? 'm3u8' : (isMkv ? 'mkv' : 'mp4');
+
         streams.push({
             name: displayName,
             title: streamTitle,
@@ -573,8 +577,10 @@ async function getStreams(tmdbId, mediaType, season, episode, extraArgs) {
             quality: quality,
             size: parsedSize,
             priority: srv.priority || 99,
-            type: srv.url.indexOf('.m3u8') >= 0 ? 'm3u8' : 'mp4',
-            format: srv.url.indexOf('.m3u8') >= 0 ? 'hls' : 'mp4',
+            type: streamFormat === 'mkv' ? 'mp4' : streamFormat,
+            format: streamFormat,
+            container: streamFormat,
+            isSequential: streamFormat === 'mp4' || streamFormat === 'mkv',
             provider: '4khdhub',
             language: audio.tag.toLowerCase(),
             headers: srv.headers || {
