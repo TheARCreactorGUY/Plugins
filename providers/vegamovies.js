@@ -231,39 +231,48 @@ async function resolveMetadata(tmdbId, mediaType, extraArgs) {
  * Direct Google User Content CDN link extractor.
  */
 async function resolvePixelCloud(pixelUrl) {
+    var curUrl = pixelUrl;
+    var referer = 'https://gamerxyt.com/';
     try {
-        var resp = await safeFetch(pixelUrl, {
-            headers: {
-                'User-Agent': DEFAULT_HEADERS['User-Agent'],
-                'Referer': 'https://gamerxyt.com/'
-            },
-            redirect: 'manual'
-        }, 6000);
-        var loc = resp.headers && (resp.headers.get('location') || resp.headers.get('Location'));
-        if (loc) {
-            if (loc.indexOf('?link=') >= 0) {
-                return decodeURIComponent(loc.split('?link=')[1]);
+        for (var hop = 0; hop < 5; hop++) {
+            var resp = await safeFetch(curUrl, {
+                headers: {
+                    'User-Agent': DEFAULT_HEADERS['User-Agent'],
+                    'Referer': referer
+                },
+                redirect: 'manual'
+            }, 8000);
+
+            var loc = resp.headers && (resp.headers.get('location') || resp.headers.get('Location'));
+            if (loc) {
+                if (loc.indexOf('?link=') >= 0) {
+                    return decodeURIComponent(loc.split('?link=')[1]);
+                }
+                if (loc.indexOf('googleusercontent.com') >= 0) {
+                    return loc;
+                }
+                referer = curUrl;
+                curUrl = /^https?:\/\//i.test(loc) ? loc : new URL(loc, curUrl).href;
+                continue;
             }
-            if (loc.indexOf('googleusercontent.com') >= 0 || /^https?:\/\//i.test(loc)) {
-                return loc;
+
+            var html = await resp.text();
+            if (html.indexOf('?link=') >= 0) {
+                var mLink = html.match(/href=['"]([^'"]*\?link=[^'"]+)['"]/i) ||
+                            html.match(/['"](https?:\/\/[^'"]*\?link=[^'"]+)['"]/i);
+                if (mLink) {
+                    return decodeURIComponent(mLink[1].split('?link=')[1]);
+                }
             }
-        }
-        var finalUrl = resp.url || '';
-        if (finalUrl.indexOf('?link=') >= 0) {
-            return decodeURIComponent(finalUrl.split('?link=')[1]);
-        }
-        if (finalUrl.indexOf('video-downloads.googleusercontent.com') >= 0 || finalUrl.indexOf('googleusercontent.com') >= 0) {
-            return finalUrl;
-        }
-        var cType = (resp.headers && resp.headers.get('content-type')) || '';
-        if (cType.toLowerCase().indexOf('text/html') >= 0) {
-            var text = await resp.text();
-            var m = text.match(/href=['"](https:\/\/video-downloads\.googleusercontent\.com\/[^'"]+)['"]/i) ||
-                    text.match(/href=['"](https:\/\/[^'"]*googleusercontent\.com\/[^'"]+)['"]/i);
-            if (m) return m[1];
+            var mG = html.match(/href=['"](https:\/\/[^'"]*googleusercontent\.com\/[^'"]+)['"]/i) ||
+                     html.match(/['"](https:\/\/[^'"]*video-downloads\.googleusercontent\.com\/[^'"]+)['"]/i);
+            if (mG) {
+                return mG[1];
+            }
+            break;
         }
     } catch (_) {}
-    return pixelUrl;
+    return null;
 }
 
 /**
@@ -280,7 +289,7 @@ async function resolveHubCloud(hubUrl) {
         var text = await res.text();
 
         // Follow nested drive redirects if any
-        if (hubUrl.indexOf('hubdrive.') >= 0 || hubUrl.indexOf('/drive/') >= 0) {
+        if (hubUrl.indexOf('hubdrive.') >= 0 || hubUrl.indexOf('hblinks.') >= 0 || hubUrl.indexOf('/drive/') >= 0) {
             var driveMatch = text.match(/https:\/\/hubcloud\.[a-z0-9.]+\/drive\/[a-z0-9]+/i);
             if (driveMatch && driveMatch[0] !== hubUrl) {
                 return resolveHubCloud(driveMatch[0]);
@@ -307,7 +316,7 @@ async function resolveHubCloud(hubUrl) {
         if (pxlMatch) {
             var rawPxl = pxlMatch[1];
             var pxlDirect = rawPxl.replace(/\/u\/([a-zA-Z0-9_-]+)/, '/api/file/$1')
-                                  .replace('pixeldrain.dev', 'pixeldrain.com');
+                                  ;
             servers.push({
                 serverName: 'Pixeldrain',
                 displayName: 'Pixeldrain Server',
@@ -338,7 +347,7 @@ async function resolveHubCloud(hubUrl) {
             } else if (label.indexOf('PixelServer') >= 0 || href.indexOf('pixeldrain') >= 0) {
                 if (href.indexOf('negn6f') >= 0) continue;
                 var directPxl = href.replace(/\/u\/([a-zA-Z0-9_-]+)/, '/api/file/$1')
-                                    .replace('pixeldrain.dev', 'pixeldrain.com');
+                                    ;
                 servers.push({
                     serverName: 'Pixeldrain',
                     displayName: 'Pixeldrain Server',
@@ -408,7 +417,7 @@ async function resolveFastDlOne(fastDlUrl) {
             redirect: 'manual'
         }, 8000);
 
-        var cdnUrl = dlRes.headers.get('location');
+        var cdnUrl = dlRes.headers && (dlRes.headers.get('location') || dlRes.headers.get('Location'));
         if (cdnUrl && cdnUrl.indexOf('http') === 0) {
             return cdnUrl;
         }

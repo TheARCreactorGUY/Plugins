@@ -358,35 +358,105 @@ async function searchFallback(query, activeBase) {
  * Follows Golden Rule #5: always uses redirect: 'manual' to prevent 2GB RAM overflow!
  * Follows multi-hop redirects (e.g. hubcloud -> worker -> cryptonewz) to extract direct googleusercontent link.
  */
+
+function decodeB64(str) {
+    if (typeof atob === 'function') {
+        try { return atob(str); } catch (_) {}
+    }
+    var chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=';
+    var output = '';
+    str = String(str).replace(/=+$/, '');
+    for (var bc = 0, bs, buffer, idx = 0; buffer = str.charAt(idx++); ~buffer && (bs = bc % 4 ? bs * 64 + buffer : buffer, bc++ % 4) ? output += String.fromCharCode(255 & bs >> (-2 * bc & 6)) : 0) {
+        buffer = chars.indexOf(buffer);
+    }
+    return output;
+}
+
+function rot13(str) {
+    return str.replace(/[a-zA-Z]/g, function(c) {
+        return String.fromCharCode((c <= 'Z' ? 90 : 122) >= (c = c.charCodeAt(0) + 13) ? c : c - 26);
+    });
+}
+
+function decodeGreenmotorsPayload(encoded) {
+    try {
+        var s1 = decodeB64(encoded);
+        var s2 = decodeB64(s1);
+        var s3 = rot13(s2);
+        var s4 = decodeB64(s3);
+        var parsed = JSON.parse(s4);
+        return decodeB64(parsed.o);
+    } catch(e) {
+        return null;
+    }
+}
+
+async function resolveGreenmotorsUrl(gmUrl) {
+    try {
+        var res = await safeFetch(gmUrl, {
+            headers: Object.assign({}, DEFAULT_HEADERS, { 'Referer': 'https://new9.hdhub4u.cl/' }),
+            redirect: 'follow'
+        }, 8000);
+        var loc = res.headers && (res.headers.get('location') || res.headers.get('Location'));
+        var text = '';
+        if (loc) {
+            var target = /^https?:\/\//i.test(loc) ? loc : new URL(loc, gmUrl).href;
+            var res2 = await safeFetch(target, {
+                headers: Object.assign({}, DEFAULT_HEADERS, { 'Referer': gmUrl }),
+                redirect: 'follow'
+            }, 8000);
+            text = await res2.text();
+        } else {
+            text = await res.text();
+        }
+        var m = text.match(/s\('o',\s*'([^']+)'/);
+        if (!m) return null;
+        return decodeGreenmotorsPayload(m[1]);
+    } catch(e) {
+        return null;
+    }
+}
+
 async function resolvePixelCloud(pixelUrl) {
     var curUrl = pixelUrl;
     var referer = 'https://gamerxyt.com/';
     try {
-        for (var hop = 0; hop < 3; hop++) {
+        for (var hop = 0; hop < 5; hop++) {
             var resp = await safeFetch(curUrl, {
                 headers: {
                     'User-Agent': DEFAULT_HEADERS['User-Agent'],
                     'Referer': referer
                 },
                 redirect: 'manual'
-            }, 6000);
+            }, 8000);
 
             var loc = resp.headers && (resp.headers.get('location') || resp.headers.get('Location'));
-            if (!loc) break;
-
-            if (loc.indexOf('?link=') >= 0) {
-                return decodeURIComponent(loc.split('?link=')[1]);
+            if (loc) {
+                if (loc.indexOf('?link=') >= 0) {
+                    return decodeURIComponent(loc.split('?link=')[1]);
+                }
+                if (loc.indexOf('googleusercontent.com') >= 0) {
+                    return loc;
+                }
+                referer = curUrl;
+                curUrl = /^https?:\/\//i.test(loc) ? loc : new URL(loc, curUrl).href;
+                continue;
             }
-            if (loc.indexOf('googleusercontent.com') >= 0) {
-                return loc;
+
+            var html = await resp.text();
+            if (html.indexOf('?link=') >= 0) {
+                var mLink = html.match(/href=['"]([^'"]*\?link=[^'"]+)['"]/i) ||
+                            html.match(/['"](https?:\/\/[^'"]*\?link=[^'"]+)['"]/i);
+                if (mLink) {
+                    return decodeURIComponent(mLink[1].split('?link=')[1]);
+                }
             }
-
-            referer = curUrl;
-            curUrl = loc;
-        }
-
-        if (curUrl && curUrl !== pixelUrl && (curUrl.indexOf('googleusercontent.com') >= 0 || curUrl.indexOf('workers.dev') >= 0)) {
-            return curUrl;
+            var mG = html.match(/href=['"](https:\/\/[^'"]*googleusercontent\.com\/[^'"]+)['"]/i) ||
+                     html.match(/['"](https:\/\/[^'"]*video-downloads\.googleusercontent\.com\/[^'"]+)['"]/i);
+            if (mG) {
+                return mG[1];
+            }
+            break;
         }
     } catch (_) {}
     return null;
@@ -442,7 +512,7 @@ async function resolveHubCloud(hubUrl, activeBase) {
         if (!pageHtml) return [];
 
         // Follow nested drive redirects if any
-        if (hubUrl.indexOf('hubdrive.') >= 0 || hubUrl.indexOf('/file/') >= 0) {
+        if (hubUrl.indexOf('hubdrive.') >= 0 || hubUrl.indexOf('hblinks.') >= 0 || hubUrl.indexOf('/file/') >= 0) {
             var hubCloudMatch = pageHtml.match(/https:\/\/hubcloud\.[a-z0-9.]+\/drive\/[a-z0-9]+/i);
             if (hubCloudMatch && hubCloudMatch[0] !== hubUrl) {
                 return resolveHubCloud(hubCloudMatch[0], activeBase);
@@ -483,7 +553,7 @@ async function resolveHubCloud(hubUrl, activeBase) {
         if (pxlMatch) {
             var rawPxl = pxlMatch[1];
             var pxlDirect = rawPxl.replace(/\/u\/([a-zA-Z0-9_-]+)/, '/api/file/$1?download')
-                                  .replace('pixeldrain.dev', 'pixeldrain.com');
+                                  ;
             servers.push({
                 serverName: 'Pixeldrain',
                 displayName: 'Pixeldrain Server',
@@ -515,7 +585,7 @@ async function resolveHubCloud(hubUrl, activeBase) {
             } else if (label.indexOf('PixelServer') >= 0 || href.indexOf('pixeldrain') >= 0) {
                 if (href.indexOf('negn6f') >= 0) continue;
                 var directPxl = href.replace(/\/u\/([a-zA-Z0-9_-]+)/, '/api/file/$1?download')
-                                    .replace('pixeldrain.dev', 'pixeldrain.com');
+                                    ;
                 servers.push({
                     serverName: 'Pixeldrain',
                     displayName: 'Pixeldrain Server',
@@ -711,7 +781,7 @@ async function getStreams(tmdbId, mediaType, season, episode, extraArgs) {
             var label = m[2].replace(/<[^>]+>/g, '').trim();
             if (/how-to-download|tutorial|telegram|join/i.test(label) || /how-to-download/i.test(href)) continue;
 
-            if (href.indexOf('hubdrive.') >= 0 || href.indexOf('hubcloud.') >= 0 || href.indexOf('gamerxyt.') >= 0) {
+            if (href.indexOf('hubdrive.') >= 0 || href.indexOf('hubcloud.') >= 0 || href.indexOf('gamerxyt.') >= 0 || href.indexOf('greenmotors.') >= 0) {
                 var linkQuality = extractQualityFromContext(postHtml, m.index, label) || '1080p';
                 if (!seenMovieQualities[linkQuality]) {
                     seenMovieQualities[linkQuality] = true;
@@ -725,11 +795,17 @@ async function getStreams(tmdbId, mediaType, season, episode, extraArgs) {
         for (var c = 0; c < selectedMovieLinks.length; c++) {
             (function(linkItem) {
                 streamPromises.push(
-                    resolveHubCloud(linkItem.href, activeBase).then(function(servers) {
+                    (async function() {
+                        var targetHref = linkItem.href;
+                        if (targetHref.indexOf('greenmotors.') >= 0) {
+                            targetHref = await resolveGreenmotorsUrl(targetHref);
+                        }
+                        if (!targetHref) return [];
+                        var servers = await resolveHubCloud(targetHref, activeBase);
                         return servers.map(function(s) {
                             return Object.assign({}, s, { quality: s.quality || linkItem.quality || '1080p' });
                         });
-                    })
+                    })()
                 );
             })(selectedMovieLinks[c]);
         }
@@ -743,7 +819,7 @@ async function getStreams(tmdbId, mediaType, season, episode, extraArgs) {
             var eLabel = m[2].replace(/<[^>]+>/g, '').trim();
             if (/how-to-download|tutorial|telegram|join/i.test(eLabel) || /how-to-download/i.test(eHref)) continue;
 
-            if (eHref.indexOf('hubdrive.') >= 0 || eHref.indexOf('hubcloud.') >= 0 || eHref.indexOf('gamerxyt.') >= 0) {
+            if (eHref.indexOf('hubdrive.') >= 0 || eHref.indexOf('hubcloud.') >= 0 || eHref.indexOf('gamerxyt.') >= 0 || eHref.indexOf('greenmotors.') >= 0) {
                 var preSlice = postHtml.substring(Math.max(0, m.index - 300), m.index);
                 var fullContext = preSlice + ' ' + eLabel;
                 var qFromContext = parseQualityFromText(fullContext) || '1080p';
@@ -760,7 +836,7 @@ async function getStreams(tmdbId, mediaType, season, episode, extraArgs) {
             aRegex.lastIndex = 0;
             while ((m = aRegex.exec(postHtml)) !== null) {
                 var rawH = m[1];
-                if (rawH.indexOf('hubdrive.') >= 0 || rawH.indexOf('hubcloud.') >= 0) {
+                if (rawH.indexOf('hubdrive.') >= 0 || rawH.indexOf('hubcloud.') >= 0 || rawH.indexOf('greenmotors.') >= 0) {
                     allHubLinks.push(rawH);
                 }
             }
@@ -773,11 +849,17 @@ async function getStreams(tmdbId, mediaType, season, episode, extraArgs) {
         for (var t = 0; t < epCandidates.length; t++) {
             (function(cand) {
                 streamPromises.push(
-                    resolveHubCloud(cand.href, activeBase).then(function(servers) {
+                    (async function() {
+                        var targetHref = cand.href;
+                        if (targetHref.indexOf('greenmotors.') >= 0) {
+                            targetHref = await resolveGreenmotorsUrl(targetHref);
+                        }
+                        if (!targetHref) return [];
+                        var servers = await resolveHubCloud(targetHref, activeBase);
                         return servers.map(function(s) {
                             return Object.assign({}, s, { quality: s.quality || cand.quality || '1080p' });
                         });
-                    })
+                    })()
                 );
             })(epCandidates[t]);
         }
