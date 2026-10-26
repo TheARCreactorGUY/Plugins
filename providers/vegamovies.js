@@ -856,7 +856,7 @@ async function getStreams(tmdbId, mediaType, season, episode, extraArgs) {
 
             var isHls = item.url.indexOf('.m3u8') >= 0;
             var isDASH = item.url.indexOf('.mpd') >= 0;
-            var isMkv = item.url.indexOf('.mkv') >= 0;
+            var isMkv = item.url.indexOf('.mkv') >= 0 || item.url.indexOf('googleusercontent.com') >= 0 || (item.serverName && item.serverName.indexOf('Pixel') >= 0);
             var streamFormat = isHls ? 'm3u8' : (isDASH ? 'mpd' : (isMkv ? 'mkv' : 'mp4'));
 
             finalStreams.push({

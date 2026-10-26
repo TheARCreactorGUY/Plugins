@@ -591,7 +591,7 @@ async function getStreams(tmdbId, mediaType, season, episode, extraArgs) {
         var parsedSize = sizeMatch ? sizeMatch[1].trim() : (isMovie ? '2.5 GB' : '950 MB');
 
         var isHls = srv.url.indexOf('.m3u8') >= 0;
-        var isMkv = srv.url.indexOf('.mkv') >= 0;
+        var isMkv = srv.url.indexOf('.mkv') >= 0 || srv.url.indexOf('googleusercontent.com') >= 0 || (srv.serverName && srv.serverName.indexOf('Pixel') >= 0);
         var streamFormat = isHls ? 'm3u8' : (isMkv ? 'mkv' : 'mp4');
 
         streams.push({
