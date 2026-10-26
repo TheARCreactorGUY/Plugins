@@ -11,7 +11,10 @@
  */
 
 const BASE_URL = 'https://bingr.one';
-const TMDB_PROXY_URL = 'https://db.wecollege.net/3';
+const BACKUP_URLS = [
+    'https://bingr.one'
+];
+const TMDB_BASE_URL = 'https://api.themoviedb.org/3';
 
 const DEFAULT_HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36',
@@ -78,7 +81,7 @@ async function resolveMetadata(tmdbId, mediaType) {
     if (!title || !year || !origLang) {
         try {
             const tmdbType = mediaType === 'movie' ? 'movie' : 'tv';
-            const metaRes = await fetch(TMDB_PROXY_URL + '/' + tmdbType + '/' + tmdbId, {
+            const metaRes = await fetch(TMDB_BASE_URL + '/' + tmdbType + '/' + tmdbId, {
                 headers: DEFAULT_HEADERS,
                 signal: typeof AbortSignal !== 'undefined' && AbortSignal.timeout ? AbortSignal.timeout(6000) : undefined
             });
@@ -150,6 +153,7 @@ async function queryVidbolt(tmdbId, mediaType, season, episode, meta, timeoutMs)
                                 subtitles.push({
                                     url: s.url,
                                     language: s.lang || s.label || 'English',
+                                    lang: (s.lang || s.label || 'en').slice(0, 3).toLowerCase(),
                                     name: s.label || s.lang || 'English',
                                     headers
                                 });
@@ -193,6 +197,8 @@ async function queryVidbolt(tmdbId, mediaType, season, episode, meta, timeoutMs)
                             size: isMovie ? '2.0 GB' : '750 MB',
                             type: isHls ? 'm3u8' : 'mp4',
                             format: isHls ? 'hls' : 'mp4',
+                            container: isHls ? 'hls' : 'mp4',
+                            isSequential: !isHls,
                             provider: 'bingr',
                             language: langInfo.code,
                             headers
@@ -251,6 +257,7 @@ async function queryPunkflix(tmdbId, mediaType, season, episode, meta, timeoutMs
                         subtitles.push({
                             url: sub.url,
                             language: langInfo.name,
+                            lang: langInfo.code,
                             name: sub.title ? (langInfo.name + ' (' + sub.title + ')') : langInfo.name,
                             headers
                         });
@@ -302,6 +309,8 @@ async function queryPunkflix(tmdbId, mediaType, season, episode, meta, timeoutMs
                     size: isMovie ? '2.0 GB' : '750 MB',
                     type: 'm3u8',
                     format: 'hls',
+                    container: 'hls',
+                    isSequential: false,
                     provider: 'bingr',
                     language: langInfo.code,
                     headers
@@ -319,6 +328,8 @@ async function queryPunkflix(tmdbId, mediaType, season, episode, meta, timeoutMs
                     size: isMovie ? '2.2 GB' : '850 MB',
                     type: 'mp4',
                     format: 'mp4',
+                    container: 'mp4',
+                    isSequential: true,
                     provider: 'bingr',
                     language: langInfo.code,
                     headers
@@ -374,6 +385,7 @@ async function queryFlikhub(tmdbId, mediaType, season, episode, meta, timeoutMs)
                         subtitles.push({
                             url: sub.url,
                             language: langInfo.name,
+                            lang: langInfo.code,
                             name: sub.label || langInfo.name,
                             headers
                         });
@@ -396,6 +408,8 @@ async function queryFlikhub(tmdbId, mediaType, season, episode, meta, timeoutMs)
                     size: isMovie ? '2.0 GB' : '750 MB',
                     type: 'm3u8',
                     format: 'hls',
+                    container: 'hls',
+                    isSequential: false,
                     provider: 'bingr',
                     language: langInfo.code,
                     headers
@@ -460,6 +474,8 @@ async function queryFilmu(tmdbId, mediaType, season, episode, meta, timeoutMs) {
                             size: isMovie ? '2.0 GB' : '750 MB',
                             type: 'm3u8',
                             format: 'hls',
+                            container: 'hls',
+                            isSequential: false,
                             provider: 'bingr',
                             language: langInfo.code,
                             headers
@@ -480,6 +496,8 @@ async function queryFilmu(tmdbId, mediaType, season, episode, meta, timeoutMs) {
                     size: isMovie ? '2.0 GB' : '750 MB',
                     type: 'm3u8',
                     format: 'hls',
+                    container: 'hls',
+                    isSequential: false,
                     provider: 'bingr',
                     language: streamLang.code,
                     headers
@@ -506,8 +524,16 @@ async function queryFilmu(tmdbId, mediaType, season, episode, meta, timeoutMs) {
  * @param {number} [episode] - Episode number for episodic content
  * @returns {Promise<Array<Object>>}
  */
-async function getStreams(tmdbId, mediaType, season, episode) {
-    console.log('[Bingr] Fetching streams for ' + mediaType + ' ID: ' + tmdbId + ' (S:' + season + ' E:' + episode + ')');
+async function getStreams(tmdbId, mediaType, season, episode, extraArgs) {
+    var callArgs = (typeof globalThis !== 'undefined' && globalThis.__CALL_ARGS__) || {};
+    extraArgs = Object.assign({}, callArgs, extraArgs || {});
+    var isMovie = mediaType === 'movie';
+    var effectiveType = isMovie ? 'movie' : 'tv';
+    var isAnime = mediaType === 'anime' || Boolean(extraArgs.malId || extraArgs.anilistId || extraArgs.romajiTitle);
+    var sNum = season != null ? Number(season) : (extraArgs.season != null ? Number(extraArgs.season) : 1);
+    var eNum = episode != null ? Number(episode) : (extraArgs.episode != null ? Number(extraArgs.episode) : 1);
+
+    console.log('[Bingr] Fetching streams for ' + effectiveType + ' ID: ' + tmdbId + ' (S:' + sNum + ' E:' + eNum + ')');
 
     if (!tmdbId) {
         console.error('[Bingr] No tmdbId provided');
@@ -515,15 +541,15 @@ async function getStreams(tmdbId, mediaType, season, episode) {
     }
 
     try {
-        const meta = await resolveMetadata(tmdbId, mediaType);
+        const meta = await resolveMetadata(tmdbId, effectiveType);
         console.log('[Bingr] Resolved metadata: "' + meta.title + '" (' + meta.year + '), Original Language: ' + meta.originalLanguage);
 
         // Query providers in parallel with 8s individual timeout
         const queryPromises = [
-            queryVidbolt(tmdbId, mediaType, season, episode, meta, 8000),
-            queryPunkflix(tmdbId, mediaType, season, episode, meta, 8000),
-            queryFlikhub(tmdbId, mediaType, season, episode, meta, 8000),
-            queryFilmu(tmdbId, mediaType, season, episode, meta, 8000)
+            queryVidbolt(tmdbId, effectiveType, sNum, eNum, meta, 8000),
+            queryPunkflix(tmdbId, effectiveType, sNum, eNum, meta, 8000),
+            queryFlikhub(tmdbId, effectiveType, sNum, eNum, meta, 8000),
+            queryFilmu(tmdbId, effectiveType, sNum, eNum, meta, 8000)
         ];
 
         const queryResults = await Promise.allSettled(queryPromises);
@@ -558,6 +584,15 @@ async function getStreams(tmdbId, mediaType, season, episode) {
             console.log('[Bingr] Cross-server subtitles aggregated: ' + aggregatedSubtitles.length + ' tracks attached to all streams');
             for (let stream of allStreams) {
                 stream.subtitles = aggregatedSubtitles;
+            }
+        }
+
+        for (let stream of allStreams) {
+            if (!stream.container) {
+                stream.container = (stream.format === 'hls' || stream.type === 'm3u8') ? 'hls' : (stream.format || 'mp4');
+            }
+            if (typeof stream.isSequential !== 'boolean') {
+                stream.isSequential = stream.container === 'mp4' || stream.container === 'mkv';
             }
         }
 

@@ -12,7 +12,10 @@
 
 const BASE_URL = 'https://www.movy.sx';
 const STREAM_API_URL = 'https://api.wecollege.net';
-const TMDB_PROXY_URL = 'https://db.wecollege.net/3';
+const BACKUP_URLS = [
+    'https://www.movy.sx'
+];
+const TMDB_BASE_URL = 'https://api.themoviedb.org/3';
 
 const DEFAULT_HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36',
@@ -214,7 +217,7 @@ async function resolveMetadata(tmdbId, mediaType) {
     if (!title || !year || !origLang) {
         try {
             const tmdbType = mediaType === 'movie' ? 'movie' : 'tv';
-            const metaRes = await fetch(TMDB_PROXY_URL + '/' + tmdbType + '/' + tmdbId, {
+            const metaRes = await fetch(TMDB_BASE_URL + '/' + tmdbType + '/' + tmdbId, {
                 headers: DEFAULT_HEADERS
             });
             if (metaRes.ok) {
@@ -342,6 +345,7 @@ async function queryServer(server, params, tmdbId, seed, timeoutMs, serverIndex)
         const mappedSubs = rawSubs.map(s => ({
             url: s.url,
             language: s.language || s.lang || 'English',
+            lang: (s.lang || s.language || 'en').slice(0, 3).toLowerCase(),
             name: s.language || s.lang || 'English',
             headers: Object.assign({}, DEFAULT_HEADERS)
         })).filter(s => s.url && typeof s.url === 'string');
@@ -436,6 +440,8 @@ async function queryServer(server, params, tmdbId, seed, timeoutMs, serverIndex)
                 size: isMovie ? '2.0 GB' : '750 MB',
                 type: isHls ? 'm3u8' : 'mp4',
                 format: isHls ? 'hls' : 'mp4',
+                container: isHls ? 'hls' : 'mp4',
+                isSequential: !isHls,
                 provider: 'movy',
                 language: itemCode,
                 headers: Object.assign({}, DEFAULT_HEADERS),
@@ -466,8 +472,16 @@ async function queryServer(server, params, tmdbId, seed, timeoutMs, serverIndex)
  * @param {number} [episode] - Episode number for episodic content
  * @returns {Promise<Array<Object>>}
  */
-async function getStreams(tmdbId, mediaType, season, episode) {
-    console.log('[Movy] Fetching streams for ' + mediaType + ' ID: ' + tmdbId + ' (S:' + season + ' E:' + episode + ')');
+async function getStreams(tmdbId, mediaType, season, episode, extraArgs) {
+    var callArgs = (typeof globalThis !== 'undefined' && globalThis.__CALL_ARGS__) || {};
+    extraArgs = Object.assign({}, callArgs, extraArgs || {});
+    var isMovie = mediaType === 'movie';
+    var effectiveType = isMovie ? 'movie' : 'tv';
+    var isAnime = mediaType === 'anime' || Boolean(extraArgs.malId || extraArgs.anilistId || extraArgs.romajiTitle);
+    var sNum = season != null ? Number(season) : (extraArgs.season != null ? Number(extraArgs.season) : 1);
+    var eNum = episode != null ? Number(episode) : (extraArgs.episode != null ? Number(extraArgs.episode) : 1);
+
+    console.log('[Movy] Fetching streams for ' + effectiveType + ' ID: ' + tmdbId + ' (S:' + sNum + ' E:' + eNum + ')');
 
     if (!tmdbId) {
         console.error('[Movy] No tmdbId provided');
@@ -475,13 +489,12 @@ async function getStreams(tmdbId, mediaType, season, episode) {
     }
 
     try {
-        const isMovie = mediaType === 'movie';
-        const meta = await resolveMetadata(tmdbId, mediaType);
+        const meta = await resolveMetadata(tmdbId, effectiveType);
         console.log('[Movy] Resolved metadata: "' + meta.title + '" (' + meta.year + '), Original Language: ' + meta.originalLanguage);
 
         const params = {
             title: meta.title,
-            mediaType: isMovie ? 'movie' : 'tv',
+            mediaType: effectiveType,
             year: meta.year,
             tmdbId: String(tmdbId),
             imdbId: meta.imdbId,
@@ -490,10 +503,10 @@ async function getStreams(tmdbId, mediaType, season, episode) {
 
         if (!isMovie) {
             params.totalSeasons = meta.totalSeasons;
-            params.seasonId = season != null ? String(season) : '1';
-            params.episodeId = episode != null ? String(episode) : '1';
-            params.season = season != null ? Number(season) : 1;
-            params.episode = episode != null ? Number(episode) : 1;
+            params.seasonId = String(sNum);
+            params.episodeId = String(eNum);
+            params.season = sNum;
+            params.episode = eNum;
         }
 
         let seed;
@@ -533,6 +546,15 @@ async function getStreams(tmdbId, mediaType, season, episode) {
             console.log('[Movy] Cross-server subtitles aggregated: ' + aggregatedSubtitles.length + ' tracks attached to all streams');
             for (let i = 0; i < allStreams.length; i++) {
                 allStreams[i].subtitles = aggregatedSubtitles;
+            }
+        }
+
+        for (let stream of allStreams) {
+            if (!stream.container) {
+                stream.container = (stream.format === 'hls' || stream.type === 'm3u8') ? 'hls' : (stream.format || 'mp4');
+            }
+            if (typeof stream.isSequential !== 'boolean') {
+                stream.isSequential = stream.container === 'mp4' || stream.container === 'mkv';
             }
         }
 

@@ -22,8 +22,9 @@
 /* =========================================================================
    CONFIG BLOCK: Endpoints and Active Gateway Seeds
    ========================================================================= */
-var BASE_URL = 'https://new8.hdhub4u.cl';
+var BASE_URL = 'https://new9.hdhub4u.cl';
 var BACKUP_URLS = [
+    'https://new9.hdhub4u.cl',
     'https://new8.hdhub4u.cl',
     'https://hdhub4u.ms',
     'https://hdhub4u.tv',
@@ -37,7 +38,7 @@ var DYNAMIC_CONFIG_ENDPOINTS = [
     'https://srv-1.cdndot.fans/v2/ping'
 ];
 var TYPESENSE_SEARCH_URL = 'https://search.pingora.fyi/collections/post/documents/search';
-var TMDB_PROXY_URL = 'https://db.wecollege.net/3';
+var TMDB_BASE_URL = 'https://api.themoviedb.org/3';
 /* ========================================================================= */
 
 var USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36';
@@ -88,14 +89,32 @@ function cleanTitle(t) {
 function parseQualityFromText(text) {
     if (!text) return null;
     var t = String(text);
-    // Explicit resolutions first
-    if (/\b(2160p|4k\b|uhd\b)/i.test(t)) return '4K 2160p';
-    if (/\b(1080[pi]\b|fhd\b)/i.test(t)) return '1080p';
-    if (/\b(720p\b)/i.test(t)) return '720p';
-    if (/\b(480p\b|540p\b|360p\b)/i.test(t)) return '480p';
-    // Fallback general tags only if no explicit noise
-    if (/\b(hd)\b/i.test(t) && !/hdrip|webrip|hdts|hdtc/i.test(t)) return '720p';
-    if (/\b(sd)\b/i.test(t)) return '480p';
+
+    // 1. Explicit 2160p is definitely 4K UHD
+    if (/\b2160p\b/i.test(t)) return '4K 2160p';
+
+    // 2. Explicit 1440p / 2K
+    if (/\b(1440p|2k)\b/i.test(t)) return '1440p';
+
+    // 3. Explicit 1080p or 1080i is definitely 1080p (even if 'DS4K' or '4K Remastered' is in the string)
+    if (/\b(1080[pi]|fhd)\b/i.test(t)) return '1080p';
+
+    // 4. Explicit 720p is definitely 720p
+    if (/\b720p\b/i.test(t)) return '720p';
+
+    // 5. Explicit 480p / 540p / 576p / 360p
+    if (/\b(480p|540p|576p|360p|sd)\b/i.test(t)) return '480p';
+
+    // 6. Clean string from site watermarks and DS4K qualifiers before testing standalone 4K
+    var clean = t.replace(/\bds-?4k\b/gi, '')
+                 .replace(/\b4k[-_ ]?hdhub[a-z0-9.]*\b/gi, '')
+                 .replace(/4k[- ]?remaster(?:ed)?/gi, '')
+                 .replace(/4k[- ]?sdr/gi, '')
+                 .replace(/4k[- ]?hdr/gi, '');
+
+    if (/\b(?:4k|uhd)\b/i.test(clean)) return '4K 2160p';
+    if (/\b(?:hd)\b/i.test(clean) && !/hdrip|webrip|hdts|hdtc/i.test(clean)) return '720p';
+
     return null;
 }
 
@@ -193,7 +212,7 @@ async function resolveMetadata(tmdbId, mediaType, extraArgs) {
 
     if (!title && tmdbId) {
         try {
-            var url = TMDB_PROXY_URL + '/' + (isMovie ? 'movie' : 'tv') + '/' + tmdbId + '?api_key=test';
+            var url = TMDB_BASE_URL + '/' + (isMovie ? 'movie' : 'tv') + '/' + tmdbId + '?api_key=test';
             var res = await safeFetch(url, { headers: { 'Accept': 'application/json' } }, 5000);
             if (res.ok) {
                 var meta = await res.json();
@@ -545,8 +564,9 @@ async function getStreams(tmdbId, mediaType, season, episode, extraArgs) {
     extraArgs = Object.assign({}, callArgs, extraArgs || {});
     var isMovie = mediaType === 'movie';
     var effectiveType = isMovie ? 'movie' : 'tv';
-    var sNum = Number(season) || 1;
-    var eNum = Number(episode) || 1;
+    var isAnime = mediaType === 'anime' || Boolean(extraArgs.malId || extraArgs.anilistId || extraArgs.romajiTitle);
+    var sNum = season != null ? Number(season) : (extraArgs.season != null ? Number(extraArgs.season) : 1);
+    var eNum = episode != null ? Number(episode) : (extraArgs.episode != null ? Number(extraArgs.episode) : 1);
 
     console.log('[HDHub4u] Fetching streams for ' + effectiveType + ' TMDB: ' + tmdbId +
         (!isMovie ? ' (S:' + sNum + ' E:' + eNum + ')' : ''));

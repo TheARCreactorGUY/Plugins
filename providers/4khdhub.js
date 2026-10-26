@@ -17,7 +17,10 @@
  */
 
 var BASE_URL = 'https://4khdhub.one';
-var TMDB_PROXY_URL = 'https://db.wecollege.net/3';
+var BACKUP_URLS = [
+    'https://4khdhub.one'
+];
+var TMDB_BASE_URL = 'https://api.themoviedb.org/3';
 
 var DEFAULT_HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
@@ -367,7 +370,7 @@ async function resolveMetadata(tmdbId, mediaType, extraArgs) {
     if (!title) {
         try {
             var tmdbType = mediaType === 'movie' ? 'movie' : 'tv';
-            var res = await fetch(TMDB_PROXY_URL + '/' + tmdbType + '/' + tmdbId, {
+            var res = await fetch(TMDB_BASE_URL + '/' + tmdbType + '/' + tmdbId, {
                 headers: DEFAULT_HEADERS
             });
             if (res.ok) {
@@ -438,8 +441,10 @@ async function getStreams(tmdbId, mediaType, season, episode, extraArgs) {
     var callArgs = (typeof globalThis !== 'undefined' && globalThis.__CALL_ARGS__) || {};
     extraArgs = Object.assign({}, callArgs, extraArgs || {});
     var isMovie = mediaType === 'movie';
-    var sNum = Number(season) || 1;
-    var eNum = Number(episode) || 1;
+    var effectiveType = isMovie ? 'movie' : 'tv';
+    var isAnime = mediaType === 'anime' || Boolean(extraArgs.malId || extraArgs.anilistId || extraArgs.romajiTitle);
+    var sNum = season != null ? Number(season) : (extraArgs.season != null ? Number(extraArgs.season) : 1);
+    var eNum = episode != null ? Number(episode) : (extraArgs.episode != null ? Number(extraArgs.episode) : 1);
 
     console.log('[4KHDHub] Fetching streams for ' + (isMovie ? 'movie' : 'tv') + ' TMDB: ' + tmdbId +
         (!isMovie ? ' (S:' + sNum + ' E:' + eNum + ')' : ''));

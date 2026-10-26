@@ -24,7 +24,11 @@ var BASE_URL = 'https://net77.cc';
 var VERIFY_BASE = 'https://net52.cc';
 var VERIFY_URL = VERIFY_BASE + '/verify.php';
 var DEFAULT_API_BASE = 'https://tv.imgcdn.kim';
-var TMDB_PROXY_URL = 'https://db.wecollege.net/3';
+var BACKUP_URLS = [
+    'https://net77.cc',
+    'https://net52.cc'
+];
+var TMDB_BASE_URL = 'https://api.themoviedb.org/3';
 /* ========================================================================= */
 
 var DEFAULT_HEADERS = {
@@ -189,8 +193,14 @@ function parseMasterPlaylist(m3u8Text, baseUrl) {
                     }
                 }
                 subs.push({
-                    lang: sName || sLang || 'English',
-                    url: directVtt
+                    url: directVtt,
+                    language: sName || sLang || 'English',
+                    lang: sLang || (sName ? sName.slice(0, 2).toLowerCase() : 'en'),
+                    name: sName || sLang || 'English',
+                    headers: {
+                        'User-Agent': DEFAULT_HEADERS['User-Agent'],
+                        'Referer': VERIFY_BASE + '/'
+                    }
                 });
             }
         } else if (line.indexOf('#EXT-X-STREAM-INF:') === 0) {
@@ -241,7 +251,7 @@ async function resolveMetadata(tmdbId, mediaType, extraArgs) {
     if (!title) {
         try {
             var tmdbType = mediaType === 'movie' ? 'movie' : 'tv';
-            var res = await safeFetch(TMDB_PROXY_URL + '/' + tmdbType + '/' + tmdbId + '?language=en-US');
+            var res = await safeFetch(TMDB_BASE_URL + '/' + tmdbType + '/' + tmdbId + '?language=en-US');
             if (res.ok) {
                 var data = await res.json();
                 title = data.title || data.name || '';
@@ -411,6 +421,8 @@ async function searchAndResolveOtt(ott, meta, isMovie, season, episode, cookie) 
             size: isMovie ? '2.5 GB' : '900 MB',
             type: 'm3u8',
             format: 'hls',
+            container: 'hls',
+            isSequential: false,
             provider: 'net77',
             language: playlistInfo.primaryTag,
             headers: {
@@ -434,13 +446,15 @@ async function getStreams(tmdbId, mediaType, season, episode, extraArgs) {
     extraArgs = Object.assign({}, callArgs, extraArgs || {});
 
     var isMovie = mediaType === 'movie';
-    var sNum = Number(season) || 1;
-    var eNum = Number(episode) || 1;
+    var effectiveType = isMovie ? 'movie' : 'tv';
+    var isAnime = mediaType === 'anime' || Boolean(extraArgs.malId || extraArgs.anilistId || extraArgs.romajiTitle);
+    var sNum = season != null ? Number(season) : (extraArgs.season != null ? Number(extraArgs.season) : 1);
+    var eNum = episode != null ? Number(episode) : (extraArgs.episode != null ? Number(extraArgs.episode) : 1);
 
-    console.log('[Net77] Fetching streams for ' + (isMovie ? 'movie' : 'tv') + ' TMDB: ' + tmdbId +
+    console.log('[Net77] Fetching streams for ' + effectiveType + ' TMDB: ' + tmdbId +
         (!isMovie ? ' (S:' + sNum + ' E:' + eNum + ')' : ''));
 
-    var meta = await resolveMetadata(tmdbId, mediaType, extraArgs);
+    var meta = await resolveMetadata(tmdbId, effectiveType, extraArgs);
     console.log('[Net77] Resolved metadata: "' + meta.title + '" (' + meta.year + ')');
 
     var cookie = await getSessionCookie();
@@ -452,6 +466,12 @@ async function getStreams(tmdbId, mediaType, season, episode, extraArgs) {
 
     var results = await Promise.all(tasks);
     var streams = results.filter(Boolean);
+
+    for (var i = 0; i < streams.length; i++) {
+        var s = streams[i];
+        if (!s.container) s.container = 'hls';
+        if (typeof s.isSequential !== 'boolean') s.isSequential = false;
+    }
 
     console.log('[Net77] Discovered ' + streams.length + ' direct stream(s) across OTT libraries');
     return streams;
