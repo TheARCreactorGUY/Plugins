@@ -37,7 +37,7 @@ var PROVIDER_NAME = 'Freekz';
 // Deobfuscated parameter keys for vidstuck backend
 var KEY_TMDB = "a7f39c821d604e5b9c1e547b";
 var KEY_TS = "61d9a5274c8e3b29f38c291e6";
-var KEY_TOKEN = "c492f7a183d601e436c538a716d";
+var KEY_TOKEN = (typeof globalThis !== "undefined" && globalThis.FREEKZ_KEY_TOKEN) || (typeof __get_freekz_key_token === "function" && __get_freekz_key_token()) || "";
 var KEY_TITLE = "5e28c9147a306d1e29f3674b392a1";
 var KEY_YEAR = "b731e6c94f08675f8341c306e";
 var KEY_SEASON = "d8427b59c38a2f957c3613e85b";
