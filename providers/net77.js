@@ -24,11 +24,7 @@ var BASE_URL = 'https://net77.cc';
 var VERIFY_BASE = 'https://net52.cc';
 var VERIFY_URL = VERIFY_BASE + '/verify.php';
 var DEFAULT_API_BASE = 'https://tv.imgcdn.kim';
-var BACKUP_URLS = [
-    'https://net77.cc',
-    'https://net52.cc'
-];
-var TMDB_BASE_URL = 'https://api.themoviedb.org/3';
+var TMDB_PROXY_URL = 'https://db.wecollege.net/3';
 /* ========================================================================= */
 
 var DEFAULT_HEADERS = {
@@ -193,14 +189,8 @@ function parseMasterPlaylist(m3u8Text, baseUrl) {
                     }
                 }
                 subs.push({
-                    url: directVtt,
-                    language: sName || sLang || 'English',
-                    lang: sLang || (sName ? sName.slice(0, 2).toLowerCase() : 'en'),
-                    name: sName || sLang || 'English',
-                    headers: {
-                        'User-Agent': DEFAULT_HEADERS['User-Agent'],
-                        'Referer': VERIFY_BASE + '/'
-                    }
+                    lang: sName || sLang || 'English',
+                    url: directVtt
                 });
             }
         } else if (line.indexOf('#EXT-X-STREAM-INF:') === 0) {
@@ -251,7 +241,7 @@ async function resolveMetadata(tmdbId, mediaType, extraArgs) {
     if (!title) {
         try {
             var tmdbType = mediaType === 'movie' ? 'movie' : 'tv';
-            var res = await safeFetch(TMDB_BASE_URL + '/' + tmdbType + '/' + tmdbId + '?language=en-US');
+            var res = await safeFetch(TMDB_PROXY_URL + '/' + tmdbType + '/' + tmdbId + '?language=en-US');
             if (res.ok) {
                 var data = await res.json();
                 title = data.title || data.name || '';
@@ -269,8 +259,102 @@ async function resolveMetadata(tmdbId, mediaType, extraArgs) {
 /**
  * Searches and resolves stream for a specific OTT platform (Netflix, Prime Video, Hotstar).
  */
+function normalizeDiacritics(t) {
+    if (!t) return '';
+    var expanded = t
+        .replace(/[āĀ]/g, 'aa')
+        .replace(/[īĪ]/g, 'ee')
+        .replace(/[ūŪ]/g, 'oo')
+        .replace(/[ḍḌ]/g, 'd')
+        .replace(/[ṭṬ]/g, 't')
+        .replace(/[ṇṆ]/g, 'n')
+        .replace(/[ṣṢ]/g, 'sh')
+        .replace(/[śŚ]/g, 'sh');
+    if (typeof expanded.normalize === 'function') {
+        expanded = expanded.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+    }
+    return expanded;
+}
+
+function stripReleaseMetadata(t) {
+    return String(t || '')
+        .replace(/\[[^\]]*\]/g, ' ')
+        .replace(/\([^\)]*\)/g, ' ')
+        .replace(/\b(?:480p|720p|1080p|2160p|4k|uhd|fhd|hd|sd|dual\s*audio|multi\s*audio|bluray|web-?dl|webrip|hdrip|esub|x264|x265|hevc|season\s*\d+|s\d+)\b[\s\S]*/i, '');
+}
+
+function cleanTitle(t) {
+    return normalizeDiacritics(String(t || '')).toLowerCase().replace(/[^a-z0-9]/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+function phoneticNormalize(t) {
+    return String(t || '').replace(/aa+/g, 'a').replace(/ee+/g, 'i').replace(/oo+/g, 'u');
+}
+
+function scoreCandidateTitle(targetTitle, targetYear, candTitle, isMovie, sNum) {
+    var targetClean = cleanTitle(targetTitle);
+    var candClean = cleanTitle(candTitle);
+    var targetNorm = phoneticNormalize(targetClean);
+    var candNorm = phoneticNormalize(candClean);
+
+    var stopWords = { 'the': 1, 'a': 1, 'an': 1, 'of': 1, 'and': 1, 'in': 1, 'to': 1, 'for': 1, 'on': 1, 'with': 1, 'at': 1, 'by': 1, 'from': 1 };
+    var targetWords = targetNorm.split(' ').filter(function(w) { return w.length > 1 && !stopWords[w]; });
+    if (targetWords.length === 0) {
+        targetWords = targetNorm.split(' ').filter(function(w) { return w.length > 1; });
+    }
+    if (targetWords.length === 0) return 0;
+
+    var matchedWords = 0;
+    for (var w = 0; w < targetWords.length; w++) {
+        if (candNorm.indexOf(targetWords[w]) >= 0) matchedWords++;
+    }
+    var wordRatio = matchedWords / targetWords.length;
+    if (wordRatio < 0.6) return -100;
+
+    var score = matchedWords * 10;
+    if (candNorm.indexOf(targetNorm) >= 0 || targetNorm.indexOf(candNorm) >= 0) score += 40;
+
+    // Sequel / extra-installment detection
+    var sequelRegex = /\b(2|3|4|5|6|7|8|9|ii|iii|iv|v|vi|part\s*\d+|chapter\s*\d+)\b/i;
+    var targetSequelMatch = targetClean.match(sequelRegex);
+    var candSequelMatch = cleanTitle(stripReleaseMetadata(candTitle)).match(sequelRegex);
+    var targetSequel = targetSequelMatch ? targetSequelMatch[0].replace(/\s+/g, '') : null;
+    var candSequel = candSequelMatch ? candSequelMatch[0].replace(/\s+/g, '') : null;
+
+    if (!targetSequel && candSequel) {
+        score -= 80;
+    } else if (targetSequel && !candSequel) {
+        score -= 50;
+    } else if (targetSequel && candSequel && targetSequel !== candSequel) {
+        score -= 80;
+    }
+
+    // Year validation window (+/- 1 year tolerance)
+    if (isMovie && targetYear) {
+        var metaY = parseInt(targetYear, 10);
+        var candYearMatches = candTitle.match(/\b(19\d\d|20\d\d)\b/g);
+        if (candYearMatches && candYearMatches.length > 0) {
+            var hasYearMatch = candYearMatches.some(function(yStr) {
+                var y = parseInt(yStr, 10);
+                return Math.abs(y - metaY) <= 1;
+            });
+            if (hasYearMatch) {
+                score += 50;
+            } else {
+                score -= 80;
+            }
+        }
+        if (/season\s*\d+|complete\s*series|s\d{1,2}e\d{1,2}/i.test(candTitle)) score -= 100;
+    } else if (!isMovie) {
+        if (/\bmovie\b|\bfilm\b/i.test(candTitle)) score -= 80;
+    }
+
+    return score;
+}
+
 async function searchAndResolveOtt(ott, meta, isMovie, season, episode, cookie) {
-    var rawCookie = decodeURIComponent((cookie || '').replace(/^t_hash_t=/, ''));
+    try {
+        var rawCookie = decodeURIComponent((cookie || '').replace(/^t_hash_t=/, ''));
     var headers = {
         'Cache-Control': 'no-cache, no-store, must-revalidate',
         'Pragma': 'no-cache',
@@ -285,108 +369,146 @@ async function searchAndResolveOtt(ott, meta, isMovie, season, episode, cookie) 
         'Referer': VERIFY_BASE + '/'
     };
 
-    var cleanTitle = meta.title.replace(/[^\w\s]/g, ' ').replace(/\s+/g, ' ').trim();
-    var searchUrl = cachedApiBase + '/newtv/search.php?s=' + encodeURIComponent(cleanTitle);
+    var q1 = cleanTitle(meta.title);
+    var q2 = (meta.title || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]/g, ' ').replace(/\s+/g, ' ').trim();
+    var queries = [q1];
+    if (q2 && q2 !== q1 && queries.indexOf(q2) === -1) {
+        queries.push(q2);
+    }
+    var prefix = (meta.title || '').split(/[:\-]/)[0].trim();
+    if (prefix && prefix !== meta.title) {
+        var p1 = cleanTitle(prefix);
+        var p2 = (prefix || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]/g, ' ').replace(/\s+/g, ' ').trim();
+        if (p1 && queries.indexOf(p1) === -1) queries.push(p1);
+        if (p2 && queries.indexOf(p2) === -1) queries.push(p2);
+    }
 
-    try {
-        var sRes = await safeFetch(searchUrl, { headers: headers });
-        if (!sRes.ok) {
-            // Check if API base changed
-            await refreshApiBase();
-            searchUrl = cachedApiBase + '/newtv/search.php?s=' + encodeURIComponent(cleanTitle);
-            sRes = await safeFetch(searchUrl, { headers: headers });
-            if (!sRes.ok) return null;
-        }
+    var playId = null;
+    var selectedTitle = null;
 
-        var sJson = await sRes.json();
-        var results = sJson.searchResult || [];
-        if (results.length === 0) return null;
+    for (var qIdx = 0; qIdx < queries.length; qIdx++) {
+        var queryStr = queries[qIdx];
+        var searchUrl = cachedApiBase + '/newtv/search.php?s=' + encodeURIComponent(queryStr);
+        try {
+            var sRes = await safeFetch(searchUrl, { headers: headers });
+            if (!sRes.ok) {
+                await refreshApiBase();
+                searchUrl = cachedApiBase + '/newtv/search.php?s=' + encodeURIComponent(queryStr);
+                sRes = await safeFetch(searchUrl, { headers: headers });
+                if (!sRes.ok) continue;
+            }
 
-        var playId = null;
+            var sJson = await sRes.json();
+            var results = sJson.searchResult || [];
+            if (results.length === 0) continue;
 
-        if (isMovie) {
-            // Find closest matching movie
-            var lowerTitle = meta.title.toLowerCase();
-            var matchedMovie = results.find(function(r) { return (r.t || '').toLowerCase() === lowerTitle; }) || results[0];
-            playId = matchedMovie.id;
-        } else {
-            // For series, inspect candidate results to find seasons & episodes
-            var candidates = results.slice(0, 3);
-            for (var c = 0; c < candidates.length; c++) {
-                var cand = candidates[c];
-                var postUrl = cachedApiBase + '/newtv/post.php?id=' + cand.id;
-                var postRes = await safeFetch(postUrl, { headers: headers });
-                if (!postRes.ok) continue;
-                var postJson = await postRes.json();
+            if (isMovie) {
+                var scoredMovies = [];
+                for (var mIdx = 0; mIdx < results.length; mIdx++) {
+                    var r = results[mIdx];
+                    var sc = scoreCandidateTitle(meta.title, meta.year, r.t, true, 1);
+                    if (sc >= 40) {
+                        scoredMovies.push({ item: r, score: sc });
+                    }
+                }
+                scoredMovies.sort(function(a, b) { return b.score - a.score; });
+                if (scoredMovies.length > 0) {
+                    playId = scoredMovies[0].item.id;
+                    selectedTitle = scoredMovies[0].item.t;
+                    break;
+                }
+            } else {
+                var scoredShows = [];
+                for (var sIdx = 0; sIdx < results.length; sIdx++) {
+                    var candShow = results[sIdx];
+                    var sScore = scoreCandidateTitle(meta.title, meta.year, candShow.t, false, season);
+                    if (sScore >= 40) {
+                        scoredShows.push({ item: candShow, score: sScore });
+                    }
+                }
+                scoredShows.sort(function(a, b) { return b.score - a.score; });
+                if (scoredShows.length > 0) {
+                    var candidates = scoredShows.slice(0, 3);
+                    for (var c = 0; c < candidates.length; c++) {
+                        var cand = candidates[c].item;
+                        var postUrl = cachedApiBase + '/newtv/post.php?id=' + cand.id;
+                        var postRes = await safeFetch(postUrl, { headers: headers });
+                        if (!postRes.ok) continue;
+                        var postJson = await postRes.json();
 
-                var seasons = postJson.season || [];
-                if (seasons.length === 0) continue;
+                        var seasons = postJson.season || [];
+                        if (seasons.length === 0) continue;
 
-                var targetSeason = seasons.find(function(s) {
-                    var sNumMatch = (s.s || '').match(/Season\s*(\d+)/i);
-                    return sNumMatch && Number(sNumMatch[1]) === season;
-                }) || seasons[season - 1];
+                        var targetSeason = seasons.find(function(s) {
+                            var sNumMatch = (s.s || '').match(/Season\s*(\d+)/i);
+                            return sNumMatch && Number(sNumMatch[1]) === season;
+                        }) || seasons[season - 1];
 
-                if (!targetSeason && seasons.length > 0) targetSeason = seasons[0];
-                if (!targetSeason || !targetSeason.id) continue;
+                        if (!targetSeason && seasons.length > 0) targetSeason = seasons[0];
+                        if (!targetSeason || !targetSeason.id) continue;
 
-                // Determine target pagination (NetMirror serves 10 episodes per page)
-                var targetPage = Math.max(1, Math.floor((episode - 1) / 10) + 1);
-                var epUrl = cachedApiBase + '/newtv/episodes.php?id=' + targetSeason.id + '&page=' + targetPage;
-                var epRes = await safeFetch(epUrl, { headers: headers });
-                var epJson = epRes.ok ? await epRes.json() : {};
-                var epList = epJson.episodes || [];
+                        var targetPage = Math.max(1, Math.floor((episode - 1) / 10) + 1);
+                        var epUrl = cachedApiBase + '/newtv/episodes.php?id=' + targetSeason.id + '&page=' + targetPage;
+                        var epRes = await safeFetch(epUrl, { headers: headers });
+                        var epJson = epRes.ok ? await epRes.json() : {};
+                        var epList = epJson.episodes || [];
 
-                var matchedEp = epList.find(function(e) {
-                    var epNum = Number(String(e.ep || '').replace(/\D/g, ''));
-                    return epNum === episode;
-                });
-
-                // Fallback to page 1 if not found on calculated targetPage
-                if (!matchedEp && targetPage !== 1) {
-                    var p1Url = cachedApiBase + '/newtv/episodes.php?id=' + targetSeason.id + '&page=1';
-                    var p1Res = await safeFetch(p1Url, { headers: headers });
-                    if (p1Res.ok) {
-                        var p1Json = await p1Res.json();
-                        var p1List = p1Json.episodes || [];
-                        matchedEp = p1List.find(function(e) {
+                        var matchedEp = epList.find(function(e) {
                             var epNum = Number(String(e.ep || '').replace(/\D/g, ''));
                             return epNum === episode;
                         });
+
+                        if (!matchedEp && targetPage !== 1) {
+                            var p1Url = cachedApiBase + '/newtv/episodes.php?id=' + targetSeason.id + '&page=1';
+                            var p1Res = await safeFetch(p1Url, { headers: headers });
+                            if (p1Res.ok) {
+                                var p1Json = await p1Res.json();
+                                var p1List = p1Json.episodes || [];
+                                matchedEp = p1List.find(function(e) {
+                                    var epNum = Number(String(e.ep || '').replace(/\D/g, ''));
+                                    return epNum === episode;
+                                });
+                            }
+                        }
+
+                        if (matchedEp && matchedEp.id) {
+                            playId = matchedEp.id;
+                            selectedTitle = cand.t;
+                            break;
+                        }
                     }
-                }
-
-                if (matchedEp && matchedEp.id) {
-                    playId = matchedEp.id;
-                    break;
+                    if (playId) break;
                 }
             }
+        } catch (err) {
+            console.error('[Net77] Search error for query ' + queryStr + ' on ' + ott.name + ':', err.message);
         }
+    }
 
-        if (!playId) return null;
+    if (!playId) return null;
 
-        // Query player.php for the signed master playlist
-        var playerUrl = cachedApiBase + '/newtv/player.php?id=' + playId;
-        var pRes = await safeFetch(playerUrl, { headers: headers });
-        if (!pRes.ok) return null;
-        var pJson = await pRes.json();
+    var playerUrl = cachedApiBase + '/newtv/player.php?id=' + playId;
+    var pRes = await safeFetch(playerUrl, { headers: headers });
+    if (!pRes.ok) return null;
+    var pJson = await pRes.json();
 
-        // Self-healing: if session expired or rejected, refresh cookie and retry once
-        if (pJson.status !== 'ok' || !pJson.video_link) {
-            console.log('[Net77] Status "' + pJson.status + '", refreshing session cookie...');
-            var freshCookie = await getSessionCookie(true);
-            if (freshCookie) {
-                var freshRaw = decodeURIComponent(freshCookie.replace(/^t_hash_t=/, ''));
-                headers['Cookie'] = freshCookie;
-                headers['Usertoken'] = freshRaw;
-                pRes = await safeFetch(playerUrl, { headers: headers });
-                if (pRes.ok) {
-                    pJson = await pRes.json();
-                }
+    var isStatusValid = pJson && (pJson.status === 'ok' || pJson.status === 'otp') && Boolean(pJson.video_link);
+    if (!isStatusValid) {
+        console.log('[Net77] Status "' + (pJson ? pJson.status : 'null') + '", refreshing session cookie...');
+        var freshCookie = await getSessionCookie(true);
+        if (freshCookie) {
+            var freshRaw = decodeURIComponent(freshCookie.replace(/^t_hash_t=/, ''));
+            headers['Cookie'] = freshCookie;
+            headers['Usertoken'] = freshRaw;
+            pRes = await safeFetch(playerUrl, { headers: headers });
+            if (pRes.ok) {
+                pJson = await pRes.json();
             }
         }
+    }
 
-        if (pJson.status !== 'ok' || !pJson.video_link) return null;
+    var hasValidStream = pJson && (pJson.status === 'ok' || pJson.status === 'otp') && Boolean(pJson.video_link);
+    if (!hasValidStream) return null;
 
         // Fetch master m3u8 playlist to inspect audio tracks and subtitles
         var playlistInfo = { badge: '[MULTI]', primaryTag: 'multi', quality: '1080p', subs: [] };
@@ -416,13 +538,12 @@ async function searchAndResolveOtt(ott, meta, isMovie, season, episode, cookie) 
         return {
             name: displayName,
             title: streamTitle,
+            rawTitle: selectedTitle,
             url: pJson.video_link,
             quality: playlistInfo.quality,
             size: isMovie ? '2.5 GB' : '900 MB',
             type: 'm3u8',
             format: 'hls',
-            container: 'hls',
-            isSequential: false,
             provider: 'net77',
             language: playlistInfo.primaryTag,
             headers: {
@@ -446,15 +567,13 @@ async function getStreams(tmdbId, mediaType, season, episode, extraArgs) {
     extraArgs = Object.assign({}, callArgs, extraArgs || {});
 
     var isMovie = mediaType === 'movie';
-    var effectiveType = isMovie ? 'movie' : 'tv';
-    var isAnime = mediaType === 'anime' || Boolean(extraArgs.malId || extraArgs.anilistId || extraArgs.romajiTitle);
-    var sNum = season != null ? Number(season) : (extraArgs.season != null ? Number(extraArgs.season) : 1);
-    var eNum = episode != null ? Number(episode) : (extraArgs.episode != null ? Number(extraArgs.episode) : 1);
+    var sNum = Number(season) || 1;
+    var eNum = Number(episode) || 1;
 
-    console.log('[Net77] Fetching streams for ' + effectiveType + ' TMDB: ' + tmdbId +
+    console.log('[Net77] Fetching streams for ' + (isMovie ? 'movie' : 'tv') + ' TMDB: ' + tmdbId +
         (!isMovie ? ' (S:' + sNum + ' E:' + eNum + ')' : ''));
 
-    var meta = await resolveMetadata(tmdbId, effectiveType, extraArgs);
+    var meta = await resolveMetadata(tmdbId, mediaType, extraArgs);
     console.log('[Net77] Resolved metadata: "' + meta.title + '" (' + meta.year + ')');
 
     var cookie = await getSessionCookie();
@@ -466,12 +585,6 @@ async function getStreams(tmdbId, mediaType, season, episode, extraArgs) {
 
     var results = await Promise.all(tasks);
     var streams = results.filter(Boolean);
-
-    for (var i = 0; i < streams.length; i++) {
-        var s = streams[i];
-        if (!s.container) s.container = 'hls';
-        if (typeof s.isSequential !== 'boolean') s.isSequential = false;
-    }
 
     console.log('[Net77] Discovered ' + streams.length + ' direct stream(s) across OTT libraries');
     return streams;

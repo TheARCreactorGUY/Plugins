@@ -15,14 +15,8 @@
 /* =========================================================================
    CONFIG BLOCK: If site changes domain, update ONLY the URLs in this block.
    ========================================================================= */
-var BASE_URL = 'https://uhdmovies.beauty';
-var BACKUP_URLS = [
-    'https://uhdmovies.beauty',
-    'https://uhdmovies.us.org',
-    'https://uhdmovies.vip',
-    'https://uhdmovies.media'
-];
-var TMDB_BASE_URL = 'https://api.themoviedb.org/3';
+var BASE_URL = 'https://uhdmovies.us.org';
+var TMDB_PROXY_URL = 'https://db.wecollege.net/3';
 /* ========================================================================= */
 
 var USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36';
@@ -68,6 +62,13 @@ function pad(num, size) {
     var s = String(num);
     while (s.length < (size || 2)) s = '0' + s;
     return s;
+}
+
+function stripReleaseMetadata(t) {
+    return String(t || '')
+        .replace(/\[[^\]]*\]/g, ' ')
+        .replace(/\([^\)]*\)/g, ' ')
+        .replace(/\b(?:480p|720p|1080p|2160p|4k|uhd|fhd|hd|sd|dual\s*audio|multi\s*audio|bluray|web-?dl|webrip|hdrip|esub|x264|x265|hevc|season\s*\d+|s\d+)\b[\s\S]*/i, '');
 }
 
 function cleanTitle(t) {
@@ -123,7 +124,7 @@ async function resolveMetadata(tmdbId, mediaType, extraArgs) {
     }
 
     try {
-        var endpoint = TMDB_BASE_URL + '/' + (mediaType === 'movie' ? 'movie' : 'tv') + '/' + tmdbId;
+        var endpoint = TMDB_PROXY_URL + '/' + (mediaType === 'movie' ? 'movie' : 'tv') + '/' + tmdbId + '?api_key=tmdb';
         var resp = await safeFetch(endpoint, {
             headers: { 'Accept': 'application/json' }
         }, 5000);
@@ -149,21 +150,52 @@ async function resolveMetadata(tmdbId, mediaType, extraArgs) {
 function calculatePostScore(targetTitle, targetYear, itemTitle, isMovie) {
     var cleanTarget = cleanTitle(targetTitle);
     var cleanItem = cleanTitle(itemTitle);
-    var targetWords = cleanTarget.split(' ').filter(Boolean);
-    var itemWords = cleanItem.split(' ');
+    var targetWords = cleanTarget.split(' ').filter(function(w) { return w.length > 1; });
+    if (targetWords.length === 0) return 0;
 
     var matches = 0;
     for (var i = 0; i < targetWords.length; i++) {
-        if (itemWords.indexOf(targetWords[i]) !== -1) matches++;
+        if (cleanItem.indexOf(targetWords[i]) !== -1) matches++;
     }
-    var score = matches / Math.max(targetWords.length, 1);
+    var wordRatio = matches / targetWords.length;
+    if (wordRatio < 0.6) return -100;
 
-    if (targetYear && itemTitle.indexOf(String(targetYear)) !== -1) {
-        score += 0.3;
+    var score = matches * 10;
+    if (cleanItem.indexOf(cleanTarget) >= 0) score += 30;
+
+    // Sequel / extra-installment detection
+    var sequelRegex = /\b(2|3|4|5|6|7|8|9|ii|iii|iv|v|vi|part\s*\d+|chapter\s*\d+)\b/i;
+    var targetSequelMatch = cleanTarget.match(sequelRegex);
+    var candSequelMatch = cleanTitle(stripReleaseMetadata(itemTitle)).match(sequelRegex);
+    var targetSequel = targetSequelMatch ? targetSequelMatch[0].replace(/\s+/g, '') : null;
+    var candSequel = candSequelMatch ? candSequelMatch[0].replace(/\s+/g, '') : null;
+
+    if (!targetSequel && candSequel) {
+        score -= 80;
+    } else if (targetSequel && !candSequel) {
+        score -= 50;
+    } else if (targetSequel && candSequel && targetSequel !== candSequel) {
+        score -= 80;
     }
 
-    if (isMovie && /\b(season|s0|s1|complete|episodes)\b/i.test(itemTitle)) {
-        score -= 0.5;
+    // Year validation window (+/- 1 year tolerance)
+    if (isMovie && targetYear) {
+        var metaY = parseInt(targetYear, 10);
+        var candYearMatches = itemTitle.match(/\b(19\d\d|20\d\d)\b/g);
+        if (candYearMatches && candYearMatches.length > 0) {
+            var hasYearMatch = candYearMatches.some(function(yStr) {
+                var y = parseInt(yStr, 10);
+                return Math.abs(y - metaY) <= 1;
+            });
+            if (hasYearMatch) {
+                score += 50;
+            } else {
+                score -= 80;
+            }
+        }
+        if (/season\s*\d+|complete\s*series|s\d{1,2}e\d{1,2}/i.test(itemTitle)) score -= 100;
+    } else if (!isMovie) {
+        if (/\bmovie\b|\bfilm\b/i.test(itemTitle)) score -= 80;
     }
 
     return score;
@@ -173,47 +205,37 @@ function calculatePostScore(targetTitle, targetYear, itemTitle, isMovie) {
  * Search UHDMovies for matching post URL.
  */
 async function searchPost(title, year, isMovie) {
-    var searchBases = [BASE_URL].concat(typeof BACKUP_URLS !== 'undefined' ? BACKUP_URLS : []);
-    var seenBases = {};
+    try {
+        var query = encodeURIComponent(title);
+        var url = BASE_URL + '/?s=' + query;
+        var resp = await safeFetch(url, { headers: DEFAULT_HEADERS }, 8000);
+        var html = await resp.text();
 
-    for (var b = 0; b < searchBases.length; b++) {
-        var currentBase = searchBases[b];
-        if (seenBases[currentBase]) continue;
-        seenBases[currentBase] = true;
+        var linkRegex = /<a[^>]+href=["'](https:\/\/uhdmovies\.[^"']+\/download-[^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi;
+        var items = [];
+        var seen = {};
 
-        try {
-            var query = encodeURIComponent(title);
-            var url = currentBase + '/?s=' + query;
-            var resp = await safeFetch(url, { headers: Object.assign({}, DEFAULT_HEADERS, { 'Referer': currentBase + '/' }) }, 8000);
-            if (!resp.ok) continue;
-            var html = await resp.text();
+        var m;
+        while ((m = linkRegex.exec(html)) !== null) {
+            var postUrl = m[1];
+            if (seen[postUrl]) continue;
+            seen[postUrl] = true;
 
-            var linkRegex = /<a[^>]+href=["'](https?:\/\/[^"']+\/download-[^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi;
-            var items = [];
-            var seen = {};
+            var slug = postUrl.replace(/https?:\/\/[^\/]+\//, '').replace(/\/$/, '').replace(/^download-/, '');
+            var titleFromSlug = slug.replace(/-/g, ' ');
+            var text = m[2].replace(/<[^>]+>/g, '').trim();
+            var displayTitle = text.length > 5 ? text : titleFromSlug;
 
-            var m;
-            while ((m = linkRegex.exec(html)) !== null) {
-                var postUrl = m[1];
-                if (seen[postUrl]) continue;
-                seen[postUrl] = true;
-
-                var slug = postUrl.replace(/https?:\/\/[^\/]+\//, '').replace(/\/$/, '').replace(/^download-/, '');
-                var titleFromSlug = slug.replace(/-/g, ' ');
-                var text = m[2].replace(/<[^>]+>/g, '').trim();
-                var displayTitle = text.length > 5 ? text : titleFromSlug;
-
-                var score = calculatePostScore(title, year, displayTitle, isMovie);
-                items.push({ url: postUrl, title: displayTitle, score: score });
-            }
-
-            items.sort(function(a, b) { return b.score - a.score; });
-            if (items.length > 0) return items[0];
-        } catch (e) {
-            console.error('[UHDMovies] Search error on ' + currentBase + ':', e.message);
+            var score = calculatePostScore(title, year, displayTitle, isMovie);
+            items.push({ url: postUrl, title: displayTitle, score: score });
         }
+
+        items.sort(function(a, b) { return b.score - a.score; });
+        return items.length > 0 && items[0].score >= 40 ? items[0] : null;
+    } catch (e) {
+        console.error('[UHDMovies] Search failed:', e.message);
+        return null;
     }
-    return null;
 }
 
 /**
@@ -523,10 +545,8 @@ async function getStreams(tmdbId, mediaType, season, episode, extraArgs) {
         extraArgs = Object.assign({}, callArgs, extraArgs || {});
 
         var isMovie = mediaType === 'movie';
-        var effectiveType = isMovie ? 'movie' : 'tv';
-        var isAnime = mediaType === 'anime' || Boolean(extraArgs.malId || extraArgs.anilistId || extraArgs.romajiTitle);
-        var sNum = season != null ? Number(season) : (extraArgs.season != null ? Number(extraArgs.season) : 1);
-        var eNum = episode != null ? Number(episode) : (extraArgs.episode != null ? Number(extraArgs.episode) : 1);
+        var sNum = Number(season) || 1;
+        var eNum = Number(episode) || 1;
 
         console.log('[UHDMovies] Requesting ' + (isMovie ? 'movie' : 'tv') + ' TMDB: ' + tmdbId +
             (!isMovie ? ' (S:' + sNum + ' E:' + eNum + ')' : ''));
@@ -580,6 +600,7 @@ async function getStreams(tmdbId, mediaType, season, episode, extraArgs) {
                 return {
                     name: serverName,
                     title: streamTitle,
+                    rawTitle: post.title,
                     url: streamUrl,
                     quality: c.quality,
                     size: c.size || (isMovie ? '2.5 GB' : '1.2 GB'),

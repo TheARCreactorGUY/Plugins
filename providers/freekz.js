@@ -28,10 +28,7 @@ var NATIVE_API_BASE = 'https://h5-api.aoneroom.com/wefeed-h5api-bff';
 var NATIVE_HOST = 'mzfi.me';
 var BASE_URL = 'https://freekz.to';
 var BACKEND_URL = 'https://vidstuck.cc';
-var BACKUP_URLS = [
-    'https://freekz.to'
-];
-var TMDB_BASE_URL = 'https://api.themoviedb.org/3';
+var TMDB_PROXY_URL = 'https://db.wecollege.net/3';
 /* ========================================================================= */
 
 var PROVIDER_ID = 'freekz';
@@ -887,9 +884,8 @@ async function getStreams(tmdbId, mediaType, season, episode, extraArgs) {
 
         var isMovie = mediaType === 'movie';
         var effectiveType = isMovie ? 'movie' : 'tv';
-        var isAnime = mediaType === 'anime' || Boolean(extraArgs.malId || extraArgs.anilistId || extraArgs.romajiTitle);
-        var sNum = season != null ? Number(season) : (extraArgs.season != null ? Number(extraArgs.season) : 1);
-        var eNum = episode != null ? Number(episode) : (extraArgs.episode != null ? Number(extraArgs.episode) : 1);
+        var sNum = Number(season) || 1;
+        var eNum = Number(episode) || 1;
         var epTag = 'S' + (sNum < 10 ? '0' : '') + sNum + 'E' + (eNum < 10 ? '0' : '') + eNum;
 
         var cacheKey = String(tmdbId) + ':' + effectiveType + ':' + sNum + ':' + eNum;
@@ -926,7 +922,7 @@ async function getStreams(tmdbId, mediaType, season, episode, extraArgs) {
 
         if (!mediaTitle) {
             try {
-                var fallbackRes = await fetchWithTimeout(TMDB_BASE_URL + '/' + effectiveType + '/' + tmdbId, {
+                var fallbackRes = await fetchWithTimeout(TMDB_PROXY_URL + '/' + effectiveType + '/' + tmdbId, {
                     headers: { 'User-Agent': DEFAULT_HEADERS['User-Agent'] }
                 }, 4000);
                 if (fallbackRes.ok) {

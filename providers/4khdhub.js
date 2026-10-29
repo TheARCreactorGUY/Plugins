@@ -17,10 +17,7 @@
  */
 
 var BASE_URL = 'https://4khdhub.one';
-var BACKUP_URLS = [
-    'https://4khdhub.one'
-];
-var TMDB_BASE_URL = 'https://api.themoviedb.org/3';
+var TMDB_PROXY_URL = 'https://db.wecollege.net/3';
 
 var DEFAULT_HEADERS = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36',
@@ -196,17 +193,7 @@ async function resolveGreenmotorsUrl(gmUrl) {
             headers: DEFAULT_HEADERS,
             redirect: 'follow'
         }, 8000);
-        var loc = res.headers && (res.headers.get('location') || res.headers.get('Location'));
-        var text = '';
-        if (loc) {
-            var target = /^https?:\/\//i.test(loc) ? loc : new URL(loc, gmUrl).href;
-            var res2 = await safeFetch(target, {
-                headers: Object.assign({}, DEFAULT_HEADERS, { 'Referer': gmUrl })
-            }, 8000);
-            text = await res2.text();
-        } else {
-            text = await res.text();
-        }
+        var text = await res.text();
         var m = text.match(/s\('o',\s*'([^']+)'/);
         if (!m) return null;
         return decodeGreenmotorsPayload(m[1]);
@@ -216,48 +203,73 @@ async function resolveGreenmotorsUrl(gmUrl) {
 }
 
 async function resolvePixelCloud(pixelUrl) {
-    var curUrl = pixelUrl;
-    var referer = 'https://gamerxyt.com/';
     try {
-        for (var hop = 0; hop < 5; hop++) {
-            var resp = await safeFetch(curUrl, {
-                headers: {
-                    'User-Agent': DEFAULT_HEADERS['User-Agent'],
-                    'Referer': referer
-                },
-                redirect: 'manual'
-            }, 8000);
-
-            var loc = resp.headers && (resp.headers.get('location') || resp.headers.get('Location'));
-            if (loc) {
-                if (loc.indexOf('?link=') >= 0) {
-                    return decodeURIComponent(loc.split('?link=')[1]);
-                }
-                if (loc.indexOf('googleusercontent.com') >= 0) {
-                    return loc;
-                }
-                referer = curUrl;
-                curUrl = /^https?:\/\//i.test(loc) ? loc : new URL(loc, curUrl).href;
-                continue;
+        var resp = await safeFetch(pixelUrl, {
+            headers: {
+                'User-Agent': DEFAULT_HEADERS['User-Agent'],
+                'Referer': 'https://greenmotors.cc/'
+            },
+            redirect: 'manual'
+        }, 6000);
+        var loc = resp.headers && (resp.headers.get('location') || resp.headers.get('Location'));
+        if (loc) {
+            if (loc.indexOf('?link=') >= 0) {
+                return decodeURIComponent(loc.split('?link=')[1]);
             }
-
-            var html = await resp.text();
-            if (html.indexOf('?link=') >= 0) {
-                var mLink = html.match(/href=['"]([^'"]*\?link=[^'"]+)['"]/i) ||
-                            html.match(/['"](https?:\/\/[^'"]*\?link=[^'"]+)['"]/i);
-                if (mLink) {
-                    return decodeURIComponent(mLink[1].split('?link=')[1]);
-                }
+            if (loc.indexOf('googleusercontent.com') >= 0 || /^https?:\/\//i.test(loc)) {
+                return loc;
             }
-            var mG = html.match(/href=['"](https:\/\/[^'"]*googleusercontent\.com\/[^'"]+)['"]/i) ||
-                     html.match(/['"](https:\/\/[^'"]*video-downloads\.googleusercontent\.com\/[^'"]+)['"]/i);
-            if (mG) {
-                return mG[1];
-            }
-            break;
+        }
+        var finalUrl = resp.url || '';
+        if (finalUrl.indexOf('?link=') >= 0) {
+            return decodeURIComponent(finalUrl.split('?link=')[1]);
+        }
+        if (finalUrl.indexOf('googleusercontent.com') >= 0) {
+            return finalUrl;
+        }
+        var cType = (resp.headers && resp.headers.get('content-type')) || '';
+        if (cType.toLowerCase().indexOf('text/html') >= 0) {
+            var text = await resp.text();
+            var m = text.match(/href=['"](https:\/\/video-downloads\.googleusercontent\.com\/[^'"]+)['"]/i) ||
+                    text.match(/href=['"](https:\/\/[^'"]*googleusercontent\.com\/[^'"]+)['"]/i);
+            if (m) return m[1];
         }
     } catch (e) {}
-    return null;
+    return pixelUrl;
+}
+
+
+async function analyzeCloudStreamHealth(streamUrl) {
+    if (!streamUrl) return false;
+    try {
+        // Probe cloud stream with Range header: bytes=0-0 to prevent downloading full video
+        var probeRes = await safeFetch(streamUrl, {
+            method: 'GET',
+            headers: {
+                'User-Agent': DEFAULT_HEADERS['User-Agent'],
+                'Range': 'bytes=0-0'
+            },
+            redirect: 'follow'
+        }, 3500);
+
+        // 1. Detect HTTP 500, 502, 503, 504 server errors on cloud/worker hosts
+        if (probeRes.status >= 500 && probeRes.status <= 599) {
+            console.log('[4KHDHub Analyzer] Cloud host returned HTTP ' + probeRes.status + ' (' + streamUrl.substring(0, 50) + '...). Temporarily filtering out until revived.');
+            return false;
+        }
+
+        // 2. Detect HTML landing pages masquerading as media streams (ad-gates / link generators)
+        var cType = (probeRes.headers && (probeRes.headers.get('content-type') || probeRes.headers.get('Content-Type'))) || '';
+        if (cType.toLowerCase().indexOf('text/html') >= 0 && probeRes.status === 200) {
+            console.log('[4KHDHub Analyzer] Cloud host returned HTML page instead of video (' + streamUrl.substring(0, 50) + '...). Filtering out.');
+            return false;
+        }
+
+        return true;
+    } catch (e) {
+        // Network timeout / drop: preserve source so transient flakes do not discard valid servers
+        return true;
+    }
 }
 
 async function resolveHubCloud(hubUrl) {
@@ -271,7 +283,7 @@ async function resolveHubCloud(hubUrl) {
         var text = await res.text();
 
         // Follow nested hubdrive redirects if needed
-        if (hubUrl.indexOf('hubdrive.') >= 0 || hubUrl.indexOf('hblinks.') >= 0) {
+        if (hubUrl.indexOf('hubdrive.') >= 0) {
             var m = text.match(/https:\/\/hubcloud\.[a-z0-9.]+\/drive\/[a-z0-9]+/i);
             if (m) return resolveHubCloud(m[0]);
         }
@@ -296,7 +308,7 @@ async function resolveHubCloud(hubUrl) {
         if (pxlMatch) {
             var rawPxl = pxlMatch[1];
             var pxlDirect = rawPxl.replace(/\/u\/([a-zA-Z0-9_-]+)/, '/api/file/$1')
-                                  ;
+                                  .replace('pixeldrain.dev', 'pixeldrain.com');
             servers.push({
                 serverName: 'Pixeldrain',
                 displayName: 'Pixeldrain Server',
@@ -332,7 +344,7 @@ async function resolveHubCloud(hubUrl) {
             } else if (label.indexOf('PixelServer') >= 0 || href.indexOf('pixeldrain') >= 0) {
                 if (href.indexOf('negn6f') >= 0) continue;
                 var directPixeldrain = href.replace(/\/u\/([a-zA-Z0-9_-]+)/, '/api/file/$1')
-                                           ;
+                                           .replace('pixeldrain.dev', 'pixeldrain.com');
                 servers.push({
                     serverName: 'Pixeldrain',
                     displayName: 'Pixeldrain Server',
@@ -343,28 +355,37 @@ async function resolveHubCloud(hubUrl) {
                     }
                 });
             } else if (label.indexOf('ZipDisk') >= 0 || href.indexOf('workers.dev') >= 0) {
-                servers.push({
-                    serverName: 'ZipDisk',
-                    displayName: 'ZipDisk Server',
-                    url: href,
-                    priority: 3,
-                    headers: {
-                        'User-Agent': DEFAULT_HEADERS['User-Agent']
-                    }
-                });
-            } else if (label.indexOf('10Gbps') >= 0 || href.indexOf('pixel.hubcloud.ist') >= 0 || href.indexOf('gpdl.hubcloud.ist') >= 0) {
-                (function(h) {
-                    asyncTasks.push(resolvePixelCloud(h).then(function(directPixel) {
-                        if (directPixel) {
+                (function(zh) {
+                    asyncTasks.push(analyzeCloudStreamHealth(zh).then(function(isHealthy) {
+                        if (isHealthy) {
                             servers.push({
-                                serverName: 'Pixel Cloud',
-                                displayName: 'Pixel Cloud (Google CDN)',
-                                url: directPixel,
-                                priority: 4,
+                                serverName: 'ZipDisk',
+                                displayName: 'ZipDisk Server',
+                                url: zh,
+                                priority: 3,
                                 headers: {
                                     'User-Agent': DEFAULT_HEADERS['User-Agent']
                                 }
                             });
+                        }
+                    }).catch(function() {}));
+                })(href);
+            } else if (label.indexOf('10Gbps') >= 0 || href.indexOf('pixel.hubcloud.ist') >= 0 || href.indexOf('gpdl.hubcloud.ist') >= 0) {
+                (function(h) {
+                    asyncTasks.push(resolvePixelCloud(h).then(async function(directPixel) {
+                        if (directPixel) {
+                            var isHealthy = await analyzeCloudStreamHealth(directPixel);
+                            if (isHealthy) {
+                                servers.push({
+                                    serverName: 'Pixel Cloud',
+                                    displayName: 'Pixel Cloud (Google CDN)',
+                                    url: directPixel,
+                                    priority: 4,
+                                    headers: {
+                                        'User-Agent': DEFAULT_HEADERS['User-Agent']
+                                    }
+                                });
+                            }
                         }
                     }).catch(function() {}));
                 })(href);
@@ -389,7 +410,7 @@ async function resolveMetadata(tmdbId, mediaType, extraArgs) {
     if (!title) {
         try {
             var tmdbType = mediaType === 'movie' ? 'movie' : 'tv';
-            var res = await fetch(TMDB_BASE_URL + '/' + tmdbType + '/' + tmdbId, {
+            var res = await fetch(TMDB_PROXY_URL + '/' + tmdbType + '/' + tmdbId, {
                 headers: DEFAULT_HEADERS
             });
             if (res.ok) {
@@ -407,6 +428,107 @@ async function resolveMetadata(tmdbId, mediaType, extraArgs) {
         year: year ? String(year) : '2020',
         originalLanguage: origLang || (mediaType === 'anime' ? 'ja' : 'en')
     };
+}
+
+
+function stripReleaseMetadata(t) {
+    return String(t || '')
+        .replace(/\[[^\]]*\]/g, ' ')
+        .replace(/\([^\)]*\)/g, ' ')
+        .replace(/\b(?:480p|720p|1080p|2160p|4k|uhd|fhd|hd|sd|dual\s*audio|multi\s*audio|bluray|web-?dl|webrip|hdrip|esub|x264|x265|hevc|season\s*\d+|s\d+)\b[\s\S]*/i, '');
+}
+
+function cleanTitle(t) {
+    return String(t || '').toLowerCase().replace(/[^a-z0-9]/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+function scoreCandidateTitle(targetTitle, targetYear, candTitle, isMovie, sNum) {
+    var targetClean = cleanTitle(targetTitle);
+    var candClean = cleanTitle(candTitle);
+
+    var stopWords = { 'the': 1, 'a': 1, 'an': 1, 'of': 1, 'and': 1, 'in': 1, 'to': 1, 'for': 1, 'on': 1, 'with': 1, 'at': 1, 'by': 1, 'from': 1 };
+    var targetWords = targetClean.split(' ').filter(function(w) { return w.length > 1 && !stopWords[w]; });
+    if (targetWords.length === 0) {
+        targetWords = targetClean.split(' ').filter(function(w) { return w.length > 1; });
+    }
+    if (targetWords.length === 0) return 0;
+
+    var matchedWords = 0;
+    for (var w = 0; w < targetWords.length; w++) {
+        if (candClean.indexOf(targetWords[w]) >= 0) matchedWords++;
+    }
+    var wordRatio = matchedWords / targetWords.length;
+    if (wordRatio < 0.6) return -100;
+
+    var score = matchedWords * 10;
+    if (candClean.indexOf(targetClean) >= 0) score += 30;
+
+    // Sequel / extra-installment detection
+    var sequelRegex = /\b(2|3|4|5|6|7|8|9|ii|iii|iv|v|vi|part\s*\d+|chapter\s*\d+)\b/i;
+    var targetSequelMatch = targetClean.match(sequelRegex);
+    var candSequelMatch = cleanTitle(stripReleaseMetadata(candTitle)).match(sequelRegex);
+    var targetSequel = targetSequelMatch ? targetSequelMatch[0].replace(/\s+/g, '') : null;
+    var candSequel = candSequelMatch ? candSequelMatch[0].replace(/\s+/g, '') : null;
+
+    if (!targetSequel && candSequel) {
+        score -= 80;
+    } else if (targetSequel && !candSequel) {
+        score -= 50;
+    } else if (targetSequel && candSequel && targetSequel !== candSequel) {
+        score -= 80;
+    }
+
+    // Year validation window (+/- 1 year tolerance)
+    if (isMovie && targetYear) {
+        var metaY = parseInt(targetYear, 10);
+        var candYearMatches = candTitle.match(/\b(19\d\d|20\d\d)\b/g);
+        if (candYearMatches && candYearMatches.length > 0) {
+            var hasYearMatch = candYearMatches.some(function(yStr) {
+                var y = parseInt(yStr, 10);
+                return Math.abs(y - metaY) <= 1;
+            });
+            if (hasYearMatch) {
+                score += 50;
+            } else {
+                score -= 80;
+            }
+        }
+    }
+
+    // Media type validation
+    if (isMovie) {
+        if (/season\s*\d+|complete\s*series|s\d{1,2}e\d{1,2}/i.test(candTitle)) {
+            score -= 100;
+        }
+    } else {
+        if (/\bmovie\b|\bfilm\b/i.test(candTitle)) {
+            score -= 80;
+        }
+        var rangeMatch = candTitle.match(/season\s*0*(\d+)\s*(?:-|to|&#8211;)\s*0*(\d+)/i) ||
+                         candTitle.match(/s0*(\d+)\s*(?:-|to)\s*s?0*(\d+)/i);
+        var singleMatch = candTitle.match(/season\s*0*(\d+)/i) || candTitle.match(/s0*(\d+)/i);
+
+        if (rangeMatch) {
+            var startS = Number(rangeMatch[1]);
+            var endS = Number(rangeMatch[2]);
+            if (sNum >= startS && sNum <= endS) {
+                score += 60;
+            } else {
+                score -= 100;
+            }
+        } else if (singleMatch) {
+            var sFound = Number(singleMatch[1]);
+            if (sFound === sNum) {
+                score += 80;
+            } else {
+                score -= 100;
+            }
+        } else if (/complete|series/i.test(candTitle)) {
+            score += 30;
+        }
+    }
+
+    return score;
 }
 
 async function search4khdHub(query, isMovie) {
@@ -460,10 +582,8 @@ async function getStreams(tmdbId, mediaType, season, episode, extraArgs) {
     var callArgs = (typeof globalThis !== 'undefined' && globalThis.__CALL_ARGS__) || {};
     extraArgs = Object.assign({}, callArgs, extraArgs || {});
     var isMovie = mediaType === 'movie';
-    var effectiveType = isMovie ? 'movie' : 'tv';
-    var isAnime = mediaType === 'anime' || Boolean(extraArgs.malId || extraArgs.anilistId || extraArgs.romajiTitle);
-    var sNum = season != null ? Number(season) : (extraArgs.season != null ? Number(extraArgs.season) : 1);
-    var eNum = episode != null ? Number(episode) : (extraArgs.episode != null ? Number(extraArgs.episode) : 1);
+    var sNum = Number(season) || 1;
+    var eNum = Number(episode) || 1;
 
     console.log('[4KHDHub] Fetching streams for ' + (isMovie ? 'movie' : 'tv') + ' TMDB: ' + tmdbId +
         (!isMovie ? ' (S:' + sNum + ' E:' + eNum + ')' : ''));
@@ -484,8 +604,22 @@ async function getStreams(tmdbId, mediaType, season, episode, extraArgs) {
         return [];
     }
 
-    var matching = searchResults.find(function(r) { return isMovie ? r.type === 'movie' : r.type === 'tv'; }) || searchResults[0];
-    console.log('[4KHDHub] Selected detail page: ' + matching.url);
+    var scoredResults = [];
+    for (var sr = 0; sr < searchResults.length; sr++) {
+        var cand = searchResults[sr];
+        var sc = scoreCandidateTitle(meta.title, meta.year, cand.title, isMovie, sNum);
+        if (sc > 0 && cand.type === (isMovie ? 'movie' : 'tv')) sc += 10;
+        if (sc >= 50) {
+            scoredResults.push({ cand: cand, score: sc });
+        }
+    }
+    scoredResults.sort(function(a, b) { return b.score - a.score; });
+    var matching = scoredResults.length > 0 && scoredResults[0].score >= 50 ? scoredResults[0].cand : null;
+    if (!matching) {
+        console.log('[4KHDHub] No candidate passed score threshold for: ' + meta.title);
+        return [];
+    }
+    console.log('[4KHDHub] Selected detail page (score ' + scoredResults[0].score + '): ' + matching.url);
 
     var pageRes = await safeFetch(matching.url, { headers: DEFAULT_HEADERS }, 8000);
     if (!pageRes.ok) return [];
@@ -591,12 +725,13 @@ async function getStreams(tmdbId, mediaType, season, episode, extraArgs) {
         var parsedSize = sizeMatch ? sizeMatch[1].trim() : (isMovie ? '2.5 GB' : '950 MB');
 
         var isHls = srv.url.indexOf('.m3u8') >= 0;
-        var isMkv = srv.url.indexOf('.mkv') >= 0 || srv.url.indexOf('googleusercontent.com') >= 0 || (srv.serverName && srv.serverName.indexOf('Pixel') >= 0);
+        var isMkv = srv.url.indexOf('.mkv') >= 0;
         var streamFormat = isHls ? 'm3u8' : (isMkv ? 'mkv' : 'mp4');
 
         streams.push({
             name: displayName,
             title: streamTitle,
+            rawTitle: rel.rawTitle || matching.title,
             url: srv.url,
             quality: quality,
             size: parsedSize,
