@@ -373,7 +373,7 @@ async function resolvePixelCloud(pixelUrl) {
             curUrl = loc;
         }
 
-        if (curUrl && curUrl !== pixelUrl && (curUrl.indexOf('googleusercontent.com') >= 0 || curUrl.indexOf('workers.dev') >= 0)) {
+        if (curUrl && curUrl !== pixelUrl && curUrl.indexOf("googleusercontent.com") >= 0) {
             return curUrl;
         }
     } catch (_) {}
@@ -525,9 +525,7 @@ async function resolveHubCloud(hubUrl, activeBase) {
                         if (directPixel) {
                             servers.push({
                                 serverName: '10Gbps Pixel Cloud',
-                                displayName: 'Pixel Cloud (Google CDN)',
-                                url: directPixel,
-                                priority: 4,
+                                displayName: 'Pixel Cloud (Google CDN)', url: directPixel, priority: 4, format: 'mkv', container: 'mkv', type: 'mp4',
                                 headers: { 'User-Agent': DEFAULT_HEADERS['User-Agent'] }
                             });
                         }
@@ -826,7 +824,7 @@ async function getStreams(tmdbId, mediaType, season, episode, extraArgs) {
 
             var streamFormat = item.url.indexOf('.m3u8') >= 0 ? 'm3u8' :
                                (item.url.indexOf('.mpd') >= 0 ? 'mpd' :
-                               (item.url.indexOf('.mkv') >= 0 ? 'mkv' : 'mp4'));
+                               ((item.url.indexOf('.mkv') >= 0 || item.url.indexOf('googleusercontent.com') >= 0) ? 'mkv' : 'mp4'));
 
             finalStreams.push({
                 name: 'HDHub4u | ' + item.serverName + ' • ' + audioInfo.badge + ' (' + item.quality + ')',

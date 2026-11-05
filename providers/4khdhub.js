@@ -203,39 +203,52 @@ async function resolveGreenmotorsUrl(gmUrl) {
 }
 
 async function resolvePixelCloud(pixelUrl) {
+    var curUrl = pixelUrl;
+    var referer = 'https://gamerxyt.com/';
     try {
-        var resp = await safeFetch(pixelUrl, {
-            headers: {
-                'User-Agent': DEFAULT_HEADERS['User-Agent'],
-                'Referer': 'https://greenmotors.cc/'
-            },
-            redirect: 'manual'
-        }, 6000);
-        var loc = resp.headers && (resp.headers.get('location') || resp.headers.get('Location'));
-        if (loc) {
+        for (var hop = 0; hop < 4; hop++) {
+            var resp = await safeFetch(curUrl, {
+                headers: {
+                    'User-Agent': DEFAULT_HEADERS['User-Agent'],
+                    'Referer': referer
+                },
+                redirect: 'manual'
+            }, 6000);
+
+            var loc = resp.headers && (resp.headers.get('location') || resp.headers.get('Location'));
+            if (!loc) {
+                var cType = (resp.headers && resp.headers.get('content-type')) || '';
+                if (cType.toLowerCase().indexOf('text/html') >= 0) {
+                    var text = await resp.text();
+                    var m = text.match(/href=['"](https:\/\/video-downloads\.googleusercontent\.com\/[^'"]+)['"]/i) ||
+                            text.match(/href=['"](https:\/\/[^'"]*googleusercontent\.com\/[^'"]+)['"]/i);
+                    if (m) return m[1];
+                }
+                break;
+            }
+
             if (loc.indexOf('?link=') >= 0) {
-                return decodeURIComponent(loc.split('?link=')[1]);
+                var extracted = decodeURIComponent(loc.split('?link=')[1]);
+                if (extracted && extracted.indexOf('googleusercontent.com') >= 0) {
+                    return extracted;
+                }
+                curUrl = extracted;
+            } else {
+                curUrl = loc;
             }
-            if (loc.indexOf('googleusercontent.com') >= 0 || /^https?:\/\//i.test(loc)) {
-                return loc;
+
+            if (curUrl.indexOf('googleusercontent.com') >= 0) {
+                return curUrl;
             }
+
+            referer = curUrl;
         }
-        var finalUrl = resp.url || '';
-        if (finalUrl.indexOf('?link=') >= 0) {
-            return decodeURIComponent(finalUrl.split('?link=')[1]);
-        }
-        if (finalUrl.indexOf('googleusercontent.com') >= 0) {
-            return finalUrl;
-        }
-        var cType = (resp.headers && resp.headers.get('content-type')) || '';
-        if (cType.toLowerCase().indexOf('text/html') >= 0) {
-            var text = await resp.text();
-            var m = text.match(/href=['"](https:\/\/video-downloads\.googleusercontent\.com\/[^'"]+)['"]/i) ||
-                    text.match(/href=['"](https:\/\/[^'"]*googleusercontent\.com\/[^'"]+)['"]/i);
-            if (m) return m[1];
+
+        if (curUrl && curUrl !== pixelUrl && curUrl.indexOf('googleusercontent.com') >= 0) {
+            return curUrl;
         }
     } catch (e) {}
-    return pixelUrl;
+    return null;
 }
 
 
@@ -725,7 +738,7 @@ async function getStreams(tmdbId, mediaType, season, episode, extraArgs) {
         var parsedSize = sizeMatch ? sizeMatch[1].trim() : (isMovie ? '2.5 GB' : '950 MB');
 
         var isHls = srv.url.indexOf('.m3u8') >= 0;
-        var isMkv = srv.url.indexOf('.mkv') >= 0;
+        var isMkv = srv.url.indexOf(".mkv") >= 0 || srv.url.indexOf("googleusercontent.com") >= 0;
         var streamFormat = isHls ? 'm3u8' : (isMkv ? 'mkv' : 'mp4');
 
         streams.push({
