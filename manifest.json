@@ -119,7 +119,7 @@
       "id": "uhdmovies",
       "name": "UHDMovies",
       "description": "Premier 4K UHD 2160p HDR, 1080p 10-bit HEVC, and 720p direct streaming provider powered by uhdmovies.us.org featuring Google Cloud CDN high-speed streaming with dynamic multi-audio and multi-season support",
-      "version": "1.1.0",
+      "version": "1.1.1",
       "author": "Secondary Agent",
       "supportedTypes": [
         "movie",
@@ -178,7 +178,7 @@
       "id": "vegamovies",
       "name": "VegaMovies",
       "description": "Premier Bollywood, Hollywood, and regional high-speed direct stream provider powered by veqamovies.mobi featuring 10Gbps Google Cloud CDN, Fast-DL, and HubCloud servers with dynamic multi-audio and multi-season support",
-      "version": "1.2.2",
+      "version": "1.2.3",
       "author": "Secondary Agent",
       "supportedTypes": [
         "movie",
@@ -209,7 +209,7 @@
       "id": "bollyflix",
       "name": "Bollyflix",
       "description": "High-speed multi-audio and direct CDN provider for Bollywood, Hollywood Hindi Dubbed, and Web Series powered by bollyflix.co.za featuring FSL R2, 10Gbps Google CDN, Pixeldrain, and FastDL servers (with GoFile Direct Stream Resolver)",
-      "version": "1.2.4",
+      "version": "1.2.5",
       "author": "Secondary Agent",
       "supportedTypes": [
         "movie",
@@ -239,7 +239,7 @@
       "id": "cinevood",
       "name": "Cinevood",
       "description": "Dedicated provider for Bollywood, Hollywood, and Indian Regional content powered by cinevood.courses featuring MobileJSR, Oxxfile Packs, HubCloud, FSL R2, and Google Cloud CDN servers",
-      "version": "1.2.2",
+      "version": "1.2.3",
       "author": "Secondary Agent",
       "supportedTypes": [
         "movie",
@@ -270,7 +270,7 @@
       "id": "hdhub4u",
       "name": "HDHub4u",
       "description": "High-speed multi-audio direct CDN streaming provider powered by HDHub4u with dynamic Pingora API discovery, Typesense indexing, featuring FSL R2, 10Gbps Google CDN, and Pixeldrain servers",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "author": "Antigravity Team",
       "supportedTypes": [
         "movie",

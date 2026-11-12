@@ -22,11 +22,11 @@
 /* =========================================================================
    CONFIG BLOCK: If site changes domain, update ONLY the URLs in this block.
    ========================================================================= */
-var BASE_URL = 'https://vegamoviess.army';
+var BASE_URL = 'https://vegamovies10.co.in';
 var BACKUP_URLS = [
+    'https://vegamovies10.co.in',
+    'https://vegamoviess.army',
     'https://vegamoviess.actor',
-    'https://vegamovies.pages.dev',
-    'https://1vegamovies.shop',
     'https://veqamovies.io'
 ];
 var DYNAMIC_URLS_ENDPOINT = 'https://raw.githubusercontent.com/SaurabhKaperwan/Utils/refs/heads/main/urls.json';
@@ -359,6 +359,41 @@ async function resolveHubCloud(hubUrl) {
 }
 
 /**
+ * Dynamically probes resolved cloud/CDN stream URL to filter HTTP 403/404/410/5xx
+ * or HTML/JSON error pages without permanently blocking recoverable hosts.
+ */
+async function analyzeCloudStreamHealth(streamUrl) {
+    if (!streamUrl) return false;
+    try {
+        var probeRes = await safeFetch(streamUrl, {
+            method: 'GET',
+            headers: {
+                'User-Agent': DEFAULT_HEADERS['User-Agent'],
+                'Range': 'bytes=0-0'
+            },
+            redirect: 'follow'
+        }, 4000);
+
+        if (probeRes.status === 403 || probeRes.status === 404 || probeRes.status === 410 ||
+            (probeRes.status >= 500 && probeRes.status <= 599)) {
+            console.log('[Vegamovies Analyzer] Cloud host returned HTTP ' + probeRes.status + ' (' + streamUrl.substring(0, 50) + '...). Temporarily filtering out.');
+            return false;
+        }
+
+        var cType = (probeRes.headers && (probeRes.headers.get('content-type') || probeRes.headers.get('Content-Type'))) || '';
+        var lowerCt = cType.toLowerCase();
+        if ((lowerCt.indexOf('text/html') >= 0 || lowerCt.indexOf('application/json') >= 0) &&
+            (probeRes.status === 200 || probeRes.status === 206)) {
+            console.log('[Vegamovies Analyzer] Cloud host returned non-media ' + cType + ' (' + streamUrl.substring(0, 50) + '...). Filtering out.');
+            return false;
+        }
+        return true;
+    } catch (_) {
+        return true;
+    }
+}
+
+/**
  * Resolves Fast-DL server link directly to Google Cloud CDN stream.
  */
 async function resolveFastDlOne(fastDlUrl) {
@@ -369,6 +404,8 @@ async function resolveFastDlOne(fastDlUrl) {
                 'Referer': BASE_URL + '/'
             }
         }, 8000);
+        var setCookie = pageRes.headers && (pageRes.headers.get('set-cookie') || '');
+        var cookieHeader = setCookie ? setCookie.split(',').map(function(c) { return c.split(';')[0].trim(); }).filter(Boolean).join('; ') : '';
         var pageHtml = await pageRes.text();
 
         var dlMatch = pageHtml.match(/href="([^"]*dl\.php[^"]+)"/i);
@@ -376,20 +413,47 @@ async function resolveFastDlOne(fastDlUrl) {
 
         var target = dlMatch[1].replace(/&amp;/g, '&');
         if (target.indexOf('http') !== 0) {
-            target = FASTDL_BASE + '/dl/' + target.replace(/^\//, '');
+            try {
+                target = new URL(target, fastDlUrl).toString();
+            } catch (_) {
+                target = FASTDL_BASE + '/dl/' + target.replace(/^\//, '');
+            }
         }
 
+        var dlHeaders = {
+            'User-Agent': DEFAULT_HEADERS['User-Agent'],
+            'Referer': fastDlUrl
+        };
+        if (cookieHeader) dlHeaders['Cookie'] = cookieHeader;
+
         var dlRes = await safeFetch(target, {
-            headers: {
-                'User-Agent': DEFAULT_HEADERS['User-Agent'],
-                'Referer': fastDlUrl
-            },
+            headers: dlHeaders,
             redirect: 'manual'
         }, 8000);
 
-        var cdnUrl = dlRes.headers.get('location');
+        var cdnUrl = dlRes.headers && (dlRes.headers.get('location') || dlRes.headers.get('Location'));
         if (cdnUrl && cdnUrl.indexOf('http') === 0) {
-            return cdnUrl;
+            return (await analyzeCloudStreamHealth(cdnUrl)) ? cdnUrl : null;
+        }
+
+        // Fallback to fast-dl prepare=1 JSON endpoint
+        var prepSep = target.indexOf('?') >= 0 ? '&' : '?';
+        var randHex = function(len) {
+            var s = '';
+            for (var i = 0; i < len; i++) s += Math.floor(Math.random() * 16).toString(16);
+            return s;
+        };
+        var prepHeaders = Object.assign({}, dlHeaders, { 'Accept': 'application/json' });
+        var prepRes = await safeFetch(target + prepSep + 'prepare=1&hash=' + randHex(24) + '&cfs=' + randHex(16), {
+            headers: prepHeaders
+        }, 8000);
+        if (prepRes && prepRes.ok) {
+            try {
+                var prepData = await prepRes.json();
+                if (prepData && prepData.ok && prepData.url && /^https?:\/\//i.test(prepData.url)) {
+                    return (await analyzeCloudStreamHealth(prepData.url)) ? prepData.url : null;
+                }
+            } catch (_) {}
         }
     } catch (_) {}
     return null;
@@ -461,28 +525,83 @@ async function resolveNexdrive(nexdriveUrl, isMovie, seasonNum, episodeNum) {
 /**
  * Searches Vegamovies across active mirrors using DLE POST search.
  */
+/**
+ * Validates that Vegamovies search results match at least one meaningful query token
+ * (filters out broken mirrors that ignore POST/GET search and return homepage cards).
+ */
+function hasRelevantVegamoviesResult(results, query) {
+    if (!results || results.length === 0) return false;
+    var qClean = cleanTitle(query);
+    var stop = { 'the': 1, 'a': 1, 'an': 1, 'of': 1, 'and': 1, 'in': 1, 'to': 1, 'for': 1 };
+    var tokens = qClean.split(' ').filter(function(w) { return w.length > 2 && !stop[w]; });
+    if (tokens.length === 0) tokens = qClean.split(' ').filter(function(w) { return w.length > 1; });
+    if (tokens.length === 0) return true;
+    for (var i = 0; i < results.length; i++) {
+        for (var t = 0; t < tokens.length; t++) {
+            if (results[i].clean.indexOf(tokens[t]) >= 0) return true;
+        }
+    }
+    return false;
+}
+
+/**
+ * Searches Vegamovies on a single mirror, preserving POST across domain redirects
+ * (prevents 302 POST->GET downgrade returning unrelated homepage cards).
+ */
 async function searchVegamoviesOnBase(currentBase, query) {
     try {
+        var normBase = String(currentBase || '').replace(/\/+$/, '');
+        var postBody = 'do=search&subaction=search&story=' + encodeURIComponent(query) + '&titleonly=3';
         var html = '';
-        var postRes = await safeFetch(currentBase + '/index.php?do=search', {
+
+        var postRes = await safeFetch(normBase + '/index.php?do=search', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/x-www-form-urlencoded',
                 'User-Agent': DEFAULT_HEADERS['User-Agent'],
-                'Referer': currentBase + '/'
+                'Referer': normBase + '/'
             },
-            body: 'do=search&subaction=search&story=' + encodeURIComponent(query) + '&titleonly=3'
+            body: postBody,
+            redirect: 'manual'
         }, 8000);
+
+        if (postRes && postRes.status >= 300 && postRes.status < 400) {
+            var loc = postRes.headers && (postRes.headers.get('location') || postRes.headers.get('Location'));
+            if (loc) {
+                var redirOriginMatch = loc.match(/^(https?:\/\/[^\/]+)/i);
+                var redirBase = redirOriginMatch ? redirOriginMatch[1] : normBase;
+                postRes = await safeFetch(redirBase + '/index.php?do=search', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/x-www-form-urlencoded',
+                        'User-Agent': DEFAULT_HEADERS['User-Agent'],
+                        'Referer': redirBase + '/'
+                    },
+                    body: postBody
+                }, 8000);
+                normBase = redirBase;
+            }
+        }
 
         if (postRes && postRes.ok) {
             html = await postRes.text();
         }
 
         if (!html || html.indexOf('<article') === -1) {
-            var getRes = await safeFetch(currentBase + '/?s=' + encodeURIComponent(query), {
+            var getDleRes = await safeFetch(normBase + '/index.php?do=search&subaction=search&story=' + encodeURIComponent(query), {
                 headers: {
                     'User-Agent': DEFAULT_HEADERS['User-Agent'],
-                    'Referer': currentBase + '/'
+                    'Referer': normBase + '/'
+                }
+            }, 7000);
+            if (getDleRes && getDleRes.ok) html = await getDleRes.text();
+        }
+
+        if (!html || html.indexOf('<article') === -1) {
+            var getRes = await safeFetch(normBase + '/?s=' + encodeURIComponent(query), {
+                headers: {
+                    'User-Agent': DEFAULT_HEADERS['User-Agent'],
+                    'Referer': normBase + '/'
                 }
             }, 7000);
             if (getRes && getRes.ok) html = await getRes.text();
@@ -491,7 +610,7 @@ async function searchVegamoviesOnBase(currentBase, query) {
         if (!html || html.indexOf('<article') === -1) {
             if (typeof Browser !== 'undefined' && Browser.resolve) {
                 try {
-                    var bRes = await Browser.resolve({ url: currentBase + '/?s=' + encodeURIComponent(query), timeoutMs: 8000 });
+                    var bRes = await Browser.resolve({ url: normBase + '/?s=' + encodeURIComponent(query), timeoutMs: 8000 });
                     if (bRes && bRes.html) html = bRes.html;
                 } catch (_) {}
             }
@@ -518,7 +637,7 @@ async function searchVegamoviesOnBase(currentBase, query) {
                 });
             }
         }
-        return results.length > 0 ? results : null;
+        return hasRelevantVegamoviesResult(results, query) ? results : null;
     } catch (_) {
         return null;
     }
@@ -655,7 +774,7 @@ function stripReleaseMetadata(t) {
     if (targetWords.length === 0) {
         targetWords = targetClean.split(' ').filter(function(w) { return w.length > 1; });
     }
-    if (targetWords.length === 0) return 0;
+    if (targetWords.length === 0) return [];
     var scoredCandidates = [];
 
     for (var i = 0; i < candidates.length; i++) {
@@ -728,6 +847,11 @@ function stripReleaseMetadata(t) {
             } else if (/complete|series/i.test(candTitle)) {
                 score += 30;
             }
+        }
+
+        var spinoffRegex = /\b(?:the\s+challenge|in\s+conversation|making\s+of|behind\s+the\s+scenes|trailer|recap|explained|special)\b/i;
+        if (spinoffRegex.test(candTitle) && !spinoffRegex.test(meta.title || '')) {
+            score -= 120;
         }
 
         if (score >= 40) {
@@ -867,7 +991,7 @@ function stripReleaseMetadata(t) {
 
             var isHls = item.url.indexOf('.m3u8') >= 0;
             var isDASH = item.url.indexOf('.mpd') >= 0;
-            var isMkv = item.url.indexOf('.mkv') >= 0;
+            var isMkv = item.url.indexOf('.mkv') >= 0 || item.url.indexOf('googleusercontent.com') >= 0;
             var streamFormat = isHls ? 'm3u8' : (isDASH ? 'mpd' : (isMkv ? 'mkv' : 'mp4'));
 
             finalStreams.push({

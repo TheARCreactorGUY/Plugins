@@ -22,12 +22,11 @@
 /* =========================================================================
    CONFIG BLOCK: If site changes domain, update ONLY the URLs in this block.
    ========================================================================= */
-var BASE_URL = 'https://bollyflix.co.za';
+var BASE_URL = 'https://bollyflix.church';
 var BACKUP_URLS = [
-    'https://bollyflix.co.za',
+    'https://bollyflix.church',
     'https://bollyflix.frl',
-    'https://bollyflix.ind.in',
-    'https://bollyflix.to'
+    'https://bollyflix.co.za'
 ];
 var DYNAMIC_URLS_ENDPOINT = 'https://raw.githubusercontent.com/SaurabhKaperwan/Utils/refs/heads/main/urls.json';
 var FASTDL_BASE = 'https://fast-dl.one';
@@ -824,10 +823,28 @@ async function resolveLinksMod(linksModUrl) {
 }
 
 /**
- * Searches Bollyflix.
+ * Validates that Bollyflix search results contain at least one meaningful query token
+ * (filters out broken mirrors returning unrelated or editorial landing pages).
+ */
+function hasRelevantBollyflixResult(results, query) {
+    if (!results || results.length === 0) return false;
+    var qClean = cleanTitle(query);
+    var stop = { 'the': 1, 'a': 1, 'an': 1, 'of': 1, 'and': 1, 'in': 1, 'to': 1, 'for': 1 };
+    var tokens = qClean.split(' ').filter(function(w) { return w.length > 2 && !stop[w]; });
+    if (tokens.length === 0) tokens = qClean.split(' ').filter(function(w) { return w.length > 1; });
+    if (tokens.length === 0) return true;
+    for (var i = 0; i < results.length; i++) {
+        for (var t = 0; t < tokens.length; t++) {
+            if (results[i].clean.indexOf(tokens[t]) >= 0) return true;
+        }
+    }
+    return false;
+}
+
+/**
+ * Searches Bollyflix (primary base, live DYNAMIC_URLS_ENDPOINT, then legacy backup mirrors).
  */
 async function searchBollyflix(query) {
-    var searchBases = [BASE_URL].concat(BACKUP_URLS);
     var seenBases = {};
 
     async function trySearchOnBase(currentBase) {
@@ -853,6 +870,7 @@ async function searchBollyflix(query) {
                 var linkMatch = art.match(/href="([^"]+)"/);
                 var titleMatch = art.match(/alt="([^"]+)"/) || art.match(/title="([^"]+)"/);
                 if (linkMatch && titleMatch) {
+                    if (/\/title\//i.test(linkMatch[1])) continue;
                     var rawTitle = titleMatch[1].replace(/<[^>]+>/g, '').trim();
                     results.push({
                         url: linkMatch[1],
@@ -861,18 +879,16 @@ async function searchBollyflix(query) {
                     });
                 }
             }
-            return results.length > 0 ? results : null;
+            return hasRelevantBollyflixResult(results, query) ? results : null;
         } catch (_) {
             return null;
         }
     }
 
-    for (var b = 0; b < searchBases.length; b++) {
-        var res = await trySearchOnBase(searchBases[b]);
-        if (res && res.length > 0) return res;
-    }
+    var primaryRes = await trySearchOnBase(BASE_URL);
+    if (primaryRes && primaryRes.length > 0) return primaryRes;
 
-    // Fallback to DYNAMIC_URLS_ENDPOINT if all hardcoded mirrors fail
+    // Query DYNAMIC_URLS_ENDPOINT before legacy hardcoded backups
     if (typeof DYNAMIC_URLS_ENDPOINT !== 'undefined' && DYNAMIC_URLS_ENDPOINT) {
         try {
             var dynRes = await safeFetch(DYNAMIC_URLS_ENDPOINT, { headers: { 'User-Agent': USER_AGENT } }, 5000);
@@ -885,6 +901,11 @@ async function searchBollyflix(query) {
                 }
             }
         } catch (_) {}
+    }
+
+    for (var b = 0; b < BACKUP_URLS.length; b++) {
+        var res = await trySearchOnBase(BACKUP_URLS[b]);
+        if (res && res.length > 0) return res;
     }
 
     return [];
@@ -932,7 +953,7 @@ async function getStreams(tmdbId, mediaType, season, episode, extraArgs) {
     if (targetWords.length === 0) {
         targetWords = targetClean.split(' ').filter(function(w) { return w.length > 1; });
     }
-    if (targetWords.length === 0) return 0;
+    if (targetWords.length === 0) return [];
     var scoredCandidates = [];
 
     for (var i = 0; i < candidates.length; i++) {
@@ -1005,6 +1026,11 @@ async function getStreams(tmdbId, mediaType, season, episode, extraArgs) {
             } else if (/complete|series/i.test(candTitle)) {
                 score += 30;
             }
+        }
+
+        var spinoffRegex = /\b(?:the\s+challenge|in\s+conversation|ending\s+explained|making\s+of|behind\s+the\s+scenes|trailer|recap|explained|special)\b/i;
+        if (spinoffRegex.test(candTitle) && !spinoffRegex.test(meta.title || '')) {
+            score -= 120;
         }
 
         if (score >= 40) {

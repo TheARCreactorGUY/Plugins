@@ -22,8 +22,9 @@
 /* =========================================================================
    CONFIG BLOCK: Endpoints and Active Gateway Seeds
    ========================================================================= */
-var BASE_URL = 'https://new8.hdhub4u.cl';
+var BASE_URL = 'https://new13.hdhub4u.cl';
 var BACKUP_URLS = [
+    'https://new13.hdhub4u.cl',
     'https://new8.hdhub4u.cl',
     'https://hdhub4u.ms',
     'https://hdhub4u.tv',
@@ -341,6 +342,175 @@ async function searchFallback(query, activeBase) {
     return [];
 }
 
+function gmRot13(str) {
+    return String(str).replace(/[a-zA-Z]/g, function(c) {
+        var base = c <= 'Z' ? 65 : 97;
+        return String.fromCharCode((c.charCodeAt(0) - base + 13) % 26 + base);
+    });
+}
+
+function gmDecodeB64(str) {
+    if (typeof atob === 'function') return atob(str);
+    if (typeof Buffer !== 'undefined') return Buffer.from(str, 'base64').toString('utf8');
+    return '';
+}
+
+function decodeGreenmotorsPayload(encoded) {
+    try {
+        var s1 = gmDecodeB64(encoded);
+        var s2 = gmDecodeB64(s1);
+        var s3 = gmRot13(s2);
+        var s4 = gmDecodeB64(s3);
+        var parsed = JSON.parse(s4);
+        return gmDecodeB64(parsed.o);
+    } catch (_) {
+        return null;
+    }
+}
+
+async function resolveGreenmotorsUrl(gmUrl) {
+    try {
+        var res = await safeFetch(gmUrl, {
+            headers: DEFAULT_HEADERS,
+            redirect: 'follow'
+        }, 8000);
+        var text = await res.text();
+        var m = text.match(/s\('o',\s*'([^']+)'/);
+        if (m && m[1]) {
+            var decoded = decodeGreenmotorsPayload(m[1]);
+            if (decoded && /^https?:\/\//i.test(decoded)) return decoded;
+        }
+        var hbMatch = text.match(/https?:\/\/hblinks\.[a-z0-9.]+\/[^\s"'<>]+/i);
+        if (hbMatch) return hbMatch[0];
+    } catch (_) {}
+    return null;
+}
+
+/**
+ * Unwraps HDHub4u intermediary locker pages (greenmotors -> hblinks -> hubcloud/hubdrive)
+ * into concrete hubcloud/hubdrive URLs ready for resolveHubCloud.
+ */
+async function unwrapHdhubIntermediary(rawUrl, activeBase) {
+    var curUrl = rawUrl;
+    if (curUrl.indexOf('greenmotors.') >= 0) {
+        var gmTarget = await resolveGreenmotorsUrl(curUrl);
+        if (!gmTarget) return [];
+        curUrl = gmTarget;
+    }
+
+    if (curUrl.indexOf('hblinks.') >= 0) {
+        try {
+            var hbHtml = '';
+            try {
+                var hbRes = await safeFetch(curUrl, {
+                    headers: {
+                        'User-Agent': DEFAULT_HEADERS['User-Agent'],
+                        'Referer': 'https://greenmotors.cc/'
+                    }
+                }, 8000);
+                if (hbRes.ok) {
+                    var txt = await hbRes.text();
+                    if (txt && txt.indexOf('Just a moment...') === -1 && txt.indexOf('challenges.cloudflare.com') === -1) {
+                        hbHtml = txt;
+                    }
+                }
+            } catch (_) {}
+
+            if (!hbHtml && typeof Browser !== 'undefined' && Browser.resolve) {
+                try {
+                    var bHb = await Browser.resolve({ url: curUrl, timeoutMs: 12000 });
+                    if (bHb && bHb.html) hbHtml = bHb.html;
+                } catch (_) {}
+            }
+            if (!hbHtml) return [];
+
+            var cloudLinks = [];
+            var driveLinks = [];
+            var seenHub = {};
+            var hbRegex = /<a[^>]+href=["'](https?:\/\/[^"']+)["'][^>]*>/gi;
+            var hm;
+            while ((hm = hbRegex.exec(hbHtml)) !== null) {
+                var u = hm[1].replace(/&amp;/g, '&');
+                if (seenHub[u]) continue;
+                seenHub[u] = true;
+                if (u.indexOf('hubcloud.') >= 0 || u.indexOf('gamerxyt.') >= 0) {
+                    cloudLinks.push(u);
+                } else if (u.indexOf('hubdrive.') >= 0) {
+                    driveLinks.push(u);
+                }
+            }
+            // Prefer hubcloud direct links (contain file sizes & all CDN mirrors); fall back to hubdrive
+            var combined = cloudLinks.length > 0 ? cloudLinks : driveLinks;
+            return combined.slice(0, 3);
+        } catch (_) {
+            return [];
+        }
+    }
+
+    if (curUrl.indexOf('hubdrive.') >= 0 || curUrl.indexOf('hubcloud.') >= 0 || curUrl.indexOf('gamerxyt.') >= 0) {
+        return [curUrl];
+    }
+    return [];
+}
+
+/**
+ * Dynamically probes resolved cloud/CDN stream URL to filter HTTP 403/404/410/5xx
+ * or HTML/JSON error pages without permanently blocking recoverable hosts.
+ */
+async function analyzeCloudStreamHealth(streamUrl) {
+    if (!streamUrl || typeof streamUrl !== 'string' || !/^https?:\/\//i.test(streamUrl)) return false;
+    if (/\.zip(?:$|\?)/i.test(streamUrl)) return false;
+    try {
+        // Quota-exceeded Google Drive workers return 206 on 1-byte Range: bytes=0-0 probes,
+        // so probe workers.dev endpoints via HEAD (falling back only on 405/501) to catch 403s.
+        var isWorkersDev = streamUrl.indexOf('workers.dev') >= 0;
+        var reqHeaders = { 'User-Agent': DEFAULT_HEADERS['User-Agent'] };
+        if (!isWorkersDev) {
+            reqHeaders['Range'] = 'bytes=0-0';
+        }
+        var probeRes = await safeFetch(streamUrl, {
+            method: isWorkersDev ? 'HEAD' : 'GET',
+            headers: reqHeaders,
+            redirect: 'follow'
+        }, 7000);
+
+        if (isWorkersDev && (probeRes.status === 405 || probeRes.status === 501)) {
+            probeRes = await safeFetch(streamUrl, {
+                method: 'GET',
+                headers: {
+                    'User-Agent': DEFAULT_HEADERS['User-Agent'],
+                    'Range': 'bytes=0-0'
+                },
+                redirect: 'follow'
+            }, 7000);
+        }
+
+        if (probeRes.status === 403 || probeRes.status === 404 || probeRes.status === 410 ||
+            (probeRes.status >= 500 && probeRes.status <= 599)) {
+            console.log('[HDHub4u Analyzer] Cloud host returned HTTP ' + probeRes.status + ' (' + streamUrl.substring(0, 50) + '...). Temporarily filtering out.');
+            return false;
+        }
+
+        var cType = (probeRes.headers && (probeRes.headers.get('content-type') || probeRes.headers.get('Content-Type'))) || '';
+        var lowerCt = cType.toLowerCase();
+        if (lowerCt.indexOf('application/zip') >= 0 || lowerCt.indexOf('application/x-zip') >= 0 ||
+            lowerCt.indexOf('application/x-rar') >= 0) {
+            console.log('[HDHub4u Analyzer] Skipping archive payload (' + cType + '): ' + streamUrl.substring(0, 50) + '...');
+            return false;
+        }
+        if ((lowerCt.indexOf('text/html') >= 0 || lowerCt.indexOf('application/json') >= 0) &&
+            (probeRes.status === 200 || probeRes.status === 206)) {
+            console.log('[HDHub4u Analyzer] Cloud host returned non-media ' + cType + ' (' + streamUrl.substring(0, 50) + '...). Filtering out.');
+            return false;
+        }
+        return true;
+    } catch (_) {
+        // Drop slow/hanging GDrive workers on timeout; preserve primary CDN endpoints on transient blip
+        if (streamUrl.indexOf('workers.dev') >= 0) return false;
+        return true;
+    }
+}
+
 /**
  * Direct Google User Content CDN link extractor.
  * Follows Golden Rule #5: always uses redirect: 'manual' to prevent 2GB RAM overflow!
@@ -512,17 +682,23 @@ async function resolveHubCloud(hubUrl, activeBase) {
                     headers: { 'User-Agent': DEFAULT_HEADERS['User-Agent'] }
                 });
             } else if (label.indexOf('ZipDisk') >= 0 || href.indexOf('workers.dev') >= 0) {
-                servers.push({
-                    serverName: 'ZipDisk',
-                    displayName: 'ZipDisk Server',
-                    url: href,
-                    priority: 3,
-                    headers: { 'User-Agent': DEFAULT_HEADERS['User-Agent'] }
-                });
+                (function(h) {
+                    asyncTasks.push(analyzeCloudStreamHealth(h).then(function(isHealthy) {
+                        if (isHealthy) {
+                            servers.push({
+                                serverName: 'ZipDisk',
+                                displayName: 'ZipDisk Server',
+                                url: h,
+                                priority: 3,
+                                headers: { 'User-Agent': DEFAULT_HEADERS['User-Agent'] }
+                            });
+                        }
+                    }).catch(function() {}));
+                })(href);
             } else if (label.indexOf('10Gbps') >= 0 || href.indexOf('pixel.hubcloud.ist') >= 0 || href.indexOf('gpdl.hubcloud.ist') >= 0) {
                 (function(h) {
-                    asyncTasks.push(resolvePixelCloud(h).then(function(directPixel) {
-                        if (directPixel) {
+                    asyncTasks.push(resolvePixelCloud(h).then(async function(directPixel) {
+                        if (directPixel && await analyzeCloudStreamHealth(directPixel)) {
                             servers.push({
                                 serverName: '10Gbps Pixel Cloud',
                                 displayName: 'Pixel Cloud (Google CDN)', url: directPixel, priority: 4, format: 'mkv', container: 'mkv', type: 'mp4',
@@ -588,7 +764,7 @@ async function getStreams(tmdbId, mediaType, season, episode, extraArgs) {
     if (targetWords.length === 0) {
         targetWords = targetClean.split(' ').filter(function(w) { return w.length > 1; });
     }
-    if (targetWords.length === 0) return 0;
+    if (targetWords.length === 0) return [];
     var scoredCandidates = [];
 
     for (var i = 0; i < candidates.length; i++) {
@@ -667,6 +843,11 @@ async function getStreams(tmdbId, mediaType, season, episode, extraArgs) {
             }
         }
 
+        var spinoffRegex = /\b(?:the\s+challenge|in\s+conversation|making\s+of|behind\s+the\s+scenes|trailer|recap|explained|special)\b/i;
+        if (spinoffRegex.test(candTitle) && !spinoffRegex.test(meta.title || '')) {
+            score -= 120;
+        }
+
         if (score >= 40) {
             scoredCandidates.push({ cand: cand, score: score });
         }
@@ -721,7 +902,7 @@ async function getStreams(tmdbId, mediaType, season, episode, extraArgs) {
     var seenStreamKeys = {};
 
     if (isMovie) {
-        // Movie: collect quality-segregated HubDrive / HubCloud download links
+        // Movie: collect quality-segregated HubDrive / HubCloud / Greenmotors / HBLinks download links
         var movieLinks = [];
         var seenMovieQualities = {};
 
@@ -730,7 +911,9 @@ async function getStreams(tmdbId, mediaType, season, episode, extraArgs) {
             var label = m[2].replace(/<[^>]+>/g, '').trim();
             if (/how-to-download|tutorial|telegram|join/i.test(label) || /how-to-download/i.test(href)) continue;
 
-            if (href.indexOf('hubdrive.') >= 0 || href.indexOf('hubcloud.') >= 0 || href.indexOf('gamerxyt.') >= 0) {
+            if (href.indexOf('hubdrive.') >= 0 || href.indexOf('hubcloud.') >= 0 ||
+                href.indexOf('gamerxyt.') >= 0 || href.indexOf('greenmotors.') >= 0 ||
+                href.indexOf('hblinks.') >= 0) {
                 var linkQuality = extractQualityFromContext(postHtml, m.index, label) || '1080p';
                 if (!seenMovieQualities[linkQuality]) {
                     seenMovieQualities[linkQuality] = true;
@@ -744,8 +927,13 @@ async function getStreams(tmdbId, mediaType, season, episode, extraArgs) {
         for (var c = 0; c < selectedMovieLinks.length; c++) {
             (function(linkItem) {
                 streamPromises.push(
-                    resolveHubCloud(linkItem.href, activeBase).then(function(servers) {
-                        return servers.map(function(s) {
+                    unwrapHdhubIntermediary(linkItem.href, activeBase).then(async function(hubUrls) {
+                        if (!hubUrls || hubUrls.length === 0) return [];
+                        var nested = await Promise.all(hubUrls.map(function(u) {
+                            return resolveHubCloud(u, activeBase).catch(function() { return []; });
+                        }));
+                        var merged = Array.prototype.concat.apply([], nested);
+                        return merged.map(function(s) {
                             return Object.assign({}, s, { quality: s.quality || linkItem.quality || '1080p' });
                         });
                     })
@@ -753,7 +941,7 @@ async function getStreams(tmdbId, mediaType, season, episode, extraArgs) {
             })(selectedMovieLinks[c]);
         }
     } else {
-        // TV Series: parse episodes (e.g., "EPiSODE 1 720p - Drive", "WATCH 1080p - Drive")
+        // TV Series: parse episodes (e.g., "EPiSODE 1 720p - Drive", "EPiSODE 1 -> greenmotors/hblinks")
         var epCandidates = [];
         var epRegex = new RegExp('(?:^|\\b)(?:episode|ep|e)\\s*0*' + eNum + '(?:\\b|\\D|$)', 'i');
 
@@ -761,13 +949,29 @@ async function getStreams(tmdbId, mediaType, season, episode, extraArgs) {
             var eHref = m[1];
             var eLabel = m[2].replace(/<[^>]+>/g, '').trim();
             if (/how-to-download|tutorial|telegram|join/i.test(eLabel) || /how-to-download/i.test(eHref)) continue;
+            if (/\b(?:pack|zip|batch)\b|\[\s*[0-9.]+\s*gb\s*\]/i.test(eLabel)) continue;
 
-            if (eHref.indexOf('hubdrive.') >= 0 || eHref.indexOf('hubcloud.') >= 0 || eHref.indexOf('gamerxyt.') >= 0) {
-                var preSlice = postHtml.substring(Math.max(0, m.index - 300), m.index);
-                var fullContext = preSlice + ' ' + eLabel;
+            if (eHref.indexOf('hubdrive.') >= 0 || eHref.indexOf('hubcloud.') >= 0 ||
+                eHref.indexOf('gamerxyt.') >= 0 || eHref.indexOf('greenmotors.') >= 0 ||
+                eHref.indexOf('hblinks.') >= 0) {
+                var preSlice = postHtml.substring(Math.max(0, m.index - 400), m.index);
+                var hrIdx = preSlice.lastIndexOf('<hr');
+                var segPre = hrIdx >= 0 ? preSlice.slice(hrIdx) : preSlice;
+                var fullContext = segPre + ' ' + eLabel;
                 var qFromContext = parseQualityFromText(fullContext) || '1080p';
 
-                if (epRegex.test(fullContext)) {
+                var matchedEpisode = epRegex.test(eLabel);
+                if (!matchedEpisode) {
+                    var epCueRegex = /(?:^|\b)(?:episode|ep)\s*0*(\d+)\b/gi;
+                    var lastEpNum = null;
+                    var epCm;
+                    while ((epCm = epCueRegex.exec(segPre)) !== null) {
+                        lastEpNum = parseInt(epCm[1], 10);
+                    }
+                    if (lastEpNum === eNum) matchedEpisode = true;
+                }
+
+                if (matchedEpisode) {
                     epCandidates.push({ href: eHref, quality: qFromContext });
                 }
             }
@@ -779,7 +983,10 @@ async function getStreams(tmdbId, mediaType, season, episode, extraArgs) {
             aRegex.lastIndex = 0;
             while ((m = aRegex.exec(postHtml)) !== null) {
                 var rawH = m[1];
-                if (rawH.indexOf('hubdrive.') >= 0 || rawH.indexOf('hubcloud.') >= 0) {
+                var rawL = m[2].replace(/<[^>]+>/g, '').trim();
+                if (/\b(?:pack|zip|batch)\b|\[\s*[0-9.]+\s*gb\s*\]/i.test(rawL)) continue;
+                if (rawH.indexOf('hubdrive.') >= 0 || rawH.indexOf('hubcloud.') >= 0 ||
+                    rawH.indexOf('greenmotors.') >= 0 || rawH.indexOf('hblinks.') >= 0) {
                     allHubLinks.push(rawH);
                 }
             }
@@ -792,8 +999,13 @@ async function getStreams(tmdbId, mediaType, season, episode, extraArgs) {
         for (var t = 0; t < epCandidates.length; t++) {
             (function(cand) {
                 streamPromises.push(
-                    resolveHubCloud(cand.href, activeBase).then(function(servers) {
-                        return servers.map(function(s) {
+                    unwrapHdhubIntermediary(cand.href, activeBase).then(async function(hubUrls) {
+                        if (!hubUrls || hubUrls.length === 0) return [];
+                        var nested = await Promise.all(hubUrls.map(function(u) {
+                            return resolveHubCloud(u, activeBase).catch(function() { return []; });
+                        }));
+                        var merged = Array.prototype.concat.apply([], nested);
+                        return merged.map(function(s) {
                             return Object.assign({}, s, { quality: s.quality || cand.quality || '1080p' });
                         });
                     })

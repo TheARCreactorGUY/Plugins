@@ -198,6 +198,11 @@ function calculatePostScore(targetTitle, targetYear, itemTitle, isMovie) {
         if (/\bmovie\b|\bfilm\b/i.test(itemTitle)) score -= 80;
     }
 
+    var spinoffRegex = /\b(?:the\s+challenge|in\s+conversation|making\s+of|behind\s+the\s+scenes|trailer|recap|explained|special)\b/i;
+    if (spinoffRegex.test(itemTitle) && !spinoffRegex.test(targetTitle || '')) {
+        score -= 120;
+    }
+
     return score;
 }
 
@@ -328,6 +333,41 @@ async function resolveNaukriAdda(sidUrl) {
 }
 
 /**
+ * Dynamically probes resolved cloud/CDN stream URL to filter HTTP 4xx/5xx or HTML/JSON error responses
+ * without permanently hard-blocking hosts that may recover later.
+ */
+async function analyzeCloudStreamHealth(streamUrl) {
+    if (!streamUrl || typeof streamUrl !== 'string' || !/^https?:\/\//i.test(streamUrl)) return false;
+    try {
+        var probeRes = await safeFetch(streamUrl, {
+            method: 'GET',
+            headers: {
+                'User-Agent': USER_AGENT,
+                'Range': 'bytes=0-0'
+            },
+            redirect: 'follow'
+        }, 4000);
+
+        if (probeRes.status === 403 || probeRes.status === 404 || probeRes.status === 410 ||
+            (probeRes.status >= 500 && probeRes.status <= 599)) {
+            console.log('[UHDMovies Analyzer] Cloud host returned HTTP ' + probeRes.status + ' (' + streamUrl.substring(0, 60) + '...). Temporarily filtering out.');
+            return false;
+        }
+
+        var cType = (probeRes.headers && (probeRes.headers.get('content-type') || probeRes.headers.get('Content-Type'))) || '';
+        var lowerCt = cType.toLowerCase();
+        if ((lowerCt.indexOf('text/html') >= 0 || lowerCt.indexOf('application/json') >= 0) &&
+            (probeRes.status === 200 || probeRes.status === 206)) {
+            console.log('[UHDMovies Analyzer] Cloud host returned non-media ' + cType + ' (' + streamUrl.substring(0, 60) + '...). Filtering out.');
+            return false;
+        }
+        return true;
+    } catch (_) {
+        return true;
+    }
+}
+
+/**
  * Resolve DriveSeed page to direct Google Cloud CDN stream URL.
  */
 async function resolveDriveSeed(driveSeedRUrl) {
@@ -370,7 +410,8 @@ async function resolveDriveSeed(driveSeedRUrl) {
     var html6 = await resp6.text();
 
     var instantMatch = html6.match(/href=['"](https:\/\/[^'"]*cdn\.video-gen\.xyz\/[^'"]+)['"]/i) ||
-                      html6.match(/href=['"](https:\/\/[^'"]*video-gen[^'"]+)['"]/i);
+                      html6.match(/href=['"](https:\/\/[^'"]*video-gen[^'"]+)['"]/i) ||
+                      html6.match(/href=['"](https:\/\/[^'"]*cdn\.video-[^'"]+)['"]/i);
     if (!instantMatch) throw new Error('Instant Download link not found on DriveSeed file page');
     var instantUrl = instantMatch[1];
 
@@ -387,10 +428,15 @@ async function resolveDriveSeed(driveSeedRUrl) {
 
     var streamUrl = null;
     if (finalUrl7.indexOf('?url=') !== -1) {
-        streamUrl = decodeURIComponent(finalUrl7.split('?url=')[1]);
-    } else if (finalUrl7.indexOf('googleusercontent.com') !== -1) {
+        var candidateUrl = decodeURIComponent(finalUrl7.split('?url=')[1]);
+        if (/^https?:\/\//i.test(candidateUrl)) {
+            streamUrl = candidateUrl;
+        }
+    }
+    if (!streamUrl && finalUrl7.indexOf('googleusercontent.com') !== -1 && /^https?:\/\//i.test(finalUrl7)) {
         streamUrl = finalUrl7;
-    } else {
+    }
+    if (!streamUrl) {
         var cType7 = (resp7.headers && resp7.headers.get('content-type')) || '';
         if (cType7.toLowerCase().indexOf('text/html') !== -1) {
             var html7 = await resp7.text();
@@ -398,12 +444,18 @@ async function resolveDriveSeed(driveSeedRUrl) {
             if (urlParamMatch) {
                 streamUrl = urlParamMatch[1];
             }
-        } else if (/^https?:\/\//i.test(finalUrl7)) {
+        } else if (finalUrl7 !== instantUrl && /^https?:\/\//i.test(finalUrl7)) {
             streamUrl = finalUrl7;
         }
     }
 
-    if (!streamUrl) throw new Error('Google CDN stream URL not extracted');
+    if (!streamUrl || !/^https?:\/\//i.test(streamUrl)) {
+        throw new Error('Google CDN stream URL not extracted');
+    }
+    var isHealthy = await analyzeCloudStreamHealth(streamUrl);
+    if (!isHealthy) {
+        throw new Error('Unhealthy cloud stream URL (HTTP error / non-media response)');
+    }
     return streamUrl;
 }
 

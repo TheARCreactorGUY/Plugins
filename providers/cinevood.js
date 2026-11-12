@@ -22,15 +22,12 @@
 /* =========================================================================
    CONFIG BLOCK: If site changes domain, update ONLY the URLs in this block.
    ========================================================================= */
-var BASE_URL = 'https://cinevood.courses';
+var BASE_URL = 'https://one.1cinevood.beer';
 var BACKUP_URLS = [
-    'https://cinevood.courses',
-    'https://cinevood.dog',
+    'https://one.1cinevood.beer',
+    'https://cinevood.coupons',
     'https://cinevood.garden',
     'https://cinevood.hair',
-    'https://cinevood.xyz',
-    'https://new1.cinevood.capital',
-    'https://cinevood.net',
     'https://1cinevood.fyi'
 ];
 var OXXFILE_BASE = 'https://new10.oxxfile.info';
@@ -489,11 +486,12 @@ async function resolveFastDlOne(fastDlUrl) {
 
         var target = dlMatch[1].replace(/&amp;/g, '&');
         if (target.indexOf('http') !== 0) {
-            var origin = 'https://fast-dl.one';
             try {
-                origin = new URL(fastDlUrl).origin;
-            } catch (_) {}
-            target = origin + (target.startsWith('/') ? '' : '/') + target;
+                target = new URL(target, fastDlUrl).toString();
+            } catch (_) {
+                var baseDir = fastDlUrl.replace(/\/[^\/]*$/, '/');
+                target = baseDir + target.replace(/^\//, '');
+            }
         }
 
         var dlRes = await safeFetch(target, {
@@ -510,6 +508,26 @@ async function resolveFastDlOne(fastDlUrl) {
         }
         if (dlRes.url && dlRes.url.indexOf('googleusercontent.com') >= 0) {
             return dlRes.url;
+        }
+        // Fallback to fast-dl.one prepare=1 JSON API if Location redirect is omitted
+        var prepSep = target.indexOf('?') >= 0 ? '&' : '?';
+        var randHex = function(len) {
+            var s = '';
+            for (var i = 0; i < len; i++) s += Math.floor(Math.random() * 16).toString(16);
+            return s;
+        };
+        var prepRes = await safeFetch(target + prepSep + 'prepare=1&hash=' + randHex(24) + '&cfs=' + randHex(16), {
+            headers: {
+                'User-Agent': DEFAULT_HEADERS['User-Agent'],
+                'Referer': fastDlUrl,
+                'Accept': 'application/json'
+            }
+        }, 8000);
+        if (prepRes && prepRes.ok) {
+            try {
+                var prepJson = await prepRes.json();
+                if (prepJson && prepJson.ok && prepJson.url) return prepJson.url;
+            } catch (_) {}
         }
     } catch (_) {}
     return null;
@@ -935,47 +953,82 @@ async function resolveOxxfilePack(packUrl, seasonNum, episodeNum) {
 }
 
 /**
- * Searches Cinevood across base and backup URLs.
+ * Validates that search results contain at least one meaningful token from query
+ * (guards against mirrors that ignore ?s= and return generic homepage posts).
+ */
+function hasRelevantCinevoodResult(results, query) {
+    if (!results || results.length === 0) return false;
+    var qClean = cleanTitle(query);
+    var stop = { 'the': 1, 'a': 1, 'an': 1, 'of': 1, 'and': 1, 'in': 1, 'to': 1, 'for': 1 };
+    var tokens = qClean.split(' ').filter(function(w) { return w.length > 2 && !stop[w]; });
+    if (tokens.length === 0) tokens = qClean.split(' ').filter(function(w) { return w.length > 1; });
+    if (tokens.length === 0) return true;
+    for (var i = 0; i < results.length; i++) {
+        for (var t = 0; t < tokens.length; t++) {
+            if (results[i].clean.indexOf(tokens[t]) >= 0) return true;
+        }
+    }
+    return false;
+}
+
+/**
+ * Searches Cinevood across base, redirector hubs (e.g. cinevood.coupons), and backup URLs.
  */
 async function searchCinevood(query) {
     var searchBases = [BASE_URL].concat(BACKUP_URLS);
     var seenBases = {};
 
-    for (var b = 0; b < searchBases.length; b++) {
-        var currentBase = searchBases[b];
-        if (seenBases[currentBase]) continue;
-        seenBases[currentBase] = true;
+    async function fetchSearchOnBase(targetBase) {
+        var normBase = String(targetBase || '').replace(/\/+$/, '');
+        if (!normBase || seenBases[normBase]) return null;
+        seenBases[normBase] = true;
 
-        try {
-            var searchUrl = currentBase + '/?s=' + encodeURIComponent(query);
-            var res = await safeFetch(searchUrl, {
-                headers: {
-                    'User-Agent': DEFAULT_HEADERS['User-Agent'],
-                    'Referer': currentBase + '/'
-                }
-            }, 7000);
-            if (!res.ok) continue;
+        var searchUrl = normBase + '/?s=' + encodeURIComponent(query);
+        var res = await safeFetch(searchUrl, {
+            headers: {
+                'User-Agent': DEFAULT_HEADERS['User-Agent'],
+                'Referer': normBase + '/'
+            }
+        }, 7000);
+        if (!res.ok) return null;
 
-            var html = await res.text();
-            var articles = html.match(/<article[\s\S]*?<\/article>/gi) || [];
-            if (articles.length === 0) continue;
+        var html = await res.text();
+        var articles = html.match(/<article[\s\S]*?<\/article>/gi) || [];
 
-            var results = [];
-            for (var i = 0; i < articles.length; i++) {
-                var art = articles[i];
-                var linkMatch = art.match(/href="([^"]+)"/);
-                var titleMatch = art.match(/title="([^"]+)"/) || art.match(/alt="([^"]+)"/);
-                if (linkMatch && titleMatch) {
-                    var rawTitle = titleMatch[1].replace(/<[^>]+>/g, '').trim();
-                    results.push({
-                        url: linkMatch[1],
-                        title: rawTitle,
-                        clean: cleanTitle(rawTitle)
-                    });
+        // Follow mirror hub landing pages (e.g. cinevood.coupons linking to one.1cinevood.beer)
+        if (articles.length === 0) {
+            var mirrorMatch = html.match(/href="(https?:\/\/[^"]*(?:1cinevood|cinevood)[^"]*)"/i);
+            if (mirrorMatch && mirrorMatch[1]) {
+                var originM = mirrorMatch[1].match(/^(https?:\/\/[^\/]+)/i);
+                if (originM && !seenBases[originM[1]]) {
+                    return await fetchSearchOnBase(originM[1]);
                 }
             }
+            return null;
+        }
 
-            if (results.length > 0) return results;
+        var results = [];
+        for (var i = 0; i < articles.length; i++) {
+            var art = articles[i];
+            var linkMatch = art.match(/href="([^"]+)"/);
+            var titleMatch = art.match(/title="([^"]+)"/) || art.match(/alt="([^"]+)"/);
+            if (linkMatch && titleMatch) {
+                var rawTitle = titleMatch[1].replace(/<[^>]+>/g, '').trim();
+                results.push({
+                    url: linkMatch[1],
+                    title: rawTitle,
+                    clean: cleanTitle(rawTitle)
+                });
+            }
+        }
+
+        return hasRelevantCinevoodResult(results, query) ? results : null;
+    }
+
+    for (var b = 0; b < searchBases.length; b++) {
+        try {
+            var found = await fetchSearchOnBase(searchBases[b]);
+            if (found && found.length > 0) return found;
         } catch (_) {}
     }
     return [];
@@ -1018,7 +1071,7 @@ async function getStreams(tmdbId, mediaType, season, episode, extraArgs) {
     if (targetWords.length === 0) {
         targetWords = targetClean.split(' ').filter(function(w) { return w.length > 1; });
     }
-    if (targetWords.length === 0) return 0;
+    if (targetWords.length === 0) return [];
     var scoredCandidates = [];
 
     for (var i = 0; i < candidates.length; i++) {
@@ -1091,6 +1144,11 @@ async function getStreams(tmdbId, mediaType, season, episode, extraArgs) {
             } else if (/complete|series/i.test(candTitle)) {
                 score += 30;
             }
+        }
+
+        var noiseRegex = /\b(?:sexmex|adult|short\s+film|coming\s+soon|trailer|teaser|the\s+challenge|in\s+conversation|making\s+of|explained|special)\b/i;
+        if (noiseRegex.test(candTitle) && !noiseRegex.test(meta.title || '')) {
+            score -= 120;
         }
 
         if (score >= 40) {
