@@ -5,8 +5,8 @@
     {
       "id": "movy",
       "name": "Movy",
-      "description": "High-speed 18-server streaming provider for movies, TV shows, and anime powered by movy.sx (Miami, Boise, Atlanta, Phoenix, Vegas, Reno, Oakland, Seattle, Dallas, Portland, Austin, Tampa, Orlando, Munich, Berlin, Paris, Delhi, Cancun)",
-      "version": "1.3.0",
+      "description": "High-speed 16-server streaming provider for movies, TV shows, and anime powered by movy.sx (Miami, Boise, Atlanta, Phoenix, Vegas, Reno, Oakland, Seattle, Dallas, Portland, Austin, Munich, Berlin, Paris, Delhi, Cancun) with dynamic IMDB fallback and cross-server subtitle aggregation",
+      "version": "1.3.1",
       "author": "Secondary Agent",
       "supportedTypes": [
         "movie",
@@ -33,8 +33,8 @@
     {
       "id": "bingr",
       "name": "Bingr",
-      "description": "Multi-source streaming provider for movies, TV shows, and anime aggregated from Bingr endpoints with dynamic multi-audio and subtitle support",
-      "version": "1.3.0",
+      "description": "Multi-source streaming provider for movies, TV shows, and anime aggregated from Bingr endpoints (Vidbolt, Punkflix, Flikhub, Filmu) with QuickJS-safe timeouts and dynamic multi-audio support",
+      "version": "1.3.1",
       "author": "Secondary Agent",
       "supportedTypes": [
         "movie",
@@ -59,8 +59,8 @@
     {
       "id": "4khdhub",
       "name": "4KHDHub",
-      "description": "Native high-speed direct stream provider for Movies, TV Shows, Webseries, and Anime aggregated from 4khdhub.one featuring FSL R2, 10Gbps Pixel Cloud, ZipDisk, and Pixeldrain servers with dynamic multi-audio support (with Real-time Cloud Stream Health Analyzer)",
-      "version": "1.4.2",
+      "description": "Native high-speed direct stream provider for Movies, TV Shows, Webseries, and Anime aggregated from 4khdhub.one featuring FSL R2, 10Gbps Pixel Cloud, ZipDisk, and Pixeldrain servers with dynamic multi-audio support and real-time Cloud Stream Health Analyzer (QuickJS compliant)",
+      "version": "1.4.3",
       "author": "Secondary Agent",
       "supportedTypes": [
         "movie",
@@ -89,7 +89,7 @@
       "id": "net77",
       "name": "NetMirror (Net77)",
       "description": "Multi-OTT streaming provider aggregating adaptive master HLS streams from Netflix, Amazon Prime Video, and Disney+ Hotstar with extensive multi-audio tracks and subtitles",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "author": "Secondary Agent",
       "supportedTypes": [
         "movie",
@@ -118,8 +118,8 @@
     {
       "id": "uhdmovies",
       "name": "UHDMovies",
-      "description": "Premier 4K UHD 2160p HDR, 1080p 10-bit HEVC, and 720p direct streaming provider powered by uhdmovies.us.org featuring Google Cloud CDN high-speed streaming with dynamic multi-audio and multi-season support",
-      "version": "1.1.1",
+      "description": "Premier 4K UHD 2160p HDR, 1080p 10-bit HEVC, and 720p direct streaming provider powered by uhdmovies.ceo featuring Google Cloud CDN high-speed streaming with optimized gateway traversal and MatchScorer audio metadata",
+      "version": "1.1.2",
       "author": "Secondary Agent",
       "supportedTypes": [
         "movie",
@@ -133,7 +133,7 @@
         "mkv",
         "m3u8"
       ],
-      "logo": "https://uhdmovies.us.org/favicon.ico",
+      "logo": "https://uhdmovies.ceo/favicon.ico",
       "contentLanguage": [
         "en",
         "hi",
@@ -145,8 +145,8 @@
     {
       "id": "freekz",
       "name": "Freekz",
-      "description": "High-speed multi-engine streaming provider for movies and TV shows powered by Freekz StreamHub Native App & Vidstuck featuring direct MP4 CDN mirrors (1080p, 720p, 480p) and 5 Vidstuck CDN servers (Atlas, Ursa, Daedalus, Orion, Andromeda) with multi-audio and extensive subtitle support",
-      "version": "2.2.2",
+      "description": "High-speed multi-engine streaming provider for movies and TV shows powered by Freekz StreamHub Native App & Vidstuck featuring direct MP4 CDN mirrors (1080p, 720p, 480p) and 5 Vidstuck CDN servers (Atlas, Ursa, Daedalus, Orion, Andromeda) with pure CryptoJS AES decryption and multi-audio support",
+      "version": "2.2.3",
       "author": "Euthopiar Core Team",
       "supportedTypes": [
         "movie",
@@ -177,8 +177,8 @@
     {
       "id": "vegamovies",
       "name": "VegaMovies",
-      "description": "Premier Bollywood, Hollywood, and regional high-speed direct stream provider powered by veqamovies.mobi featuring 10Gbps Google Cloud CDN, Fast-DL, and HubCloud servers with dynamic multi-audio and multi-season support",
-      "version": "1.2.3",
+      "description": "Premier Bollywood, Hollywood, and regional high-speed direct stream provider powered by vegamovies14.co.in featuring 10Gbps Google Cloud CDN, Fast-DL, and HubCloud servers with MatchScorer audio badges and TV episode resolution",
+      "version": "1.2.4",
       "author": "Secondary Agent",
       "supportedTypes": [
         "movie",
@@ -193,7 +193,7 @@
         "mkv",
         "m3u8"
       ],
-      "logo": "https://veqamovies.mobi/favicon.ico",
+      "logo": "https://vegamovies14.co.in/favicon.ico",
       "contentLanguage": [
         "hi",
         "en",
@@ -208,8 +208,8 @@
     {
       "id": "bollyflix",
       "name": "Bollyflix",
-      "description": "High-speed multi-audio and direct CDN provider for Bollywood, Hollywood Hindi Dubbed, and Web Series powered by bollyflix.co.za featuring FSL R2, 10Gbps Google CDN, Pixeldrain, and FastDL servers (with GoFile Direct Stream Resolver)",
-      "version": "1.2.5",
+      "description": "High-speed multi-audio and direct CDN provider for Bollywood, Hollywood Hindi Dubbed, and Web Series powered by new1.bollyflix.tours featuring ZipDisk, 10Gbps Google CDN, and FastDL servers with QuickJS-safe parallel extraction and MatchScorer episode tagging",
+      "version": "1.2.6",
       "author": "Secondary Agent",
       "supportedTypes": [
         "movie",
@@ -224,7 +224,7 @@
         "mkv",
         "m3u8"
       ],
-      "logo": "https://bollyflix.co.za/favicon.ico",
+      "logo": "https://new1.bollyflix.tours/favicon.ico",
       "contentLanguage": [
         "hi",
         "en",
@@ -238,8 +238,8 @@
     {
       "id": "cinevood",
       "name": "Cinevood",
-      "description": "Dedicated provider for Bollywood, Hollywood, and Indian Regional content powered by cinevood.courses featuring MobileJSR, Oxxfile Packs, HubCloud, FSL R2, and Google Cloud CDN servers",
-      "version": "1.2.3",
+      "description": "Dedicated provider for Bollywood, Hollywood, and Indian Regional content powered by one.1cinevood.baby with sub-second catalog search, safe QuickJS base64 decode, and Android WebView Turnstile integration",
+      "version": "1.2.4",
       "author": "Secondary Agent",
       "supportedTypes": [
         "movie",
@@ -253,7 +253,7 @@
         "mkv",
         "m3u8"
       ],
-      "logo": "https://cinevood.dog/favicon.ico",
+      "logo": "https://one.1cinevood.baby/favicon.ico",
       "contentLanguage": [
         "hi",
         "en",
@@ -269,8 +269,8 @@
     {
       "id": "hdhub4u",
       "name": "HDHub4u",
-      "description": "High-speed multi-audio direct CDN streaming provider powered by HDHub4u with dynamic Pingora API discovery, Typesense indexing, featuring FSL R2, 10Gbps Google CDN, and Pixeldrain servers",
-      "version": "1.0.1",
+      "description": "High-speed multi-audio direct CDN streaming provider powered by HDHub4u with dynamic Pingora API domain failover, Typesense search indexing, featuring 10Gbps Pixel Cloud (Google CDN), ZipDisk, and Pixeldrain servers with real-time stream health analyzer",
+      "version": "1.0.2",
       "author": "Antigravity Team",
       "supportedTypes": [
         "movie",
@@ -284,7 +284,7 @@
         "mkv",
         "m3u8"
       ],
-      "logo": "https://new8.hdhub4u.cl/favicon.ico",
+      "logo": "https://new15.hdhub4u.cl/favicon.ico",
       "contentLanguage": [
         "hi",
         "en",

@@ -1,21 +1,26 @@
 /**
  * UHDMovies Provider Plugin for Euthopiar / Universal Streaming Architecture
  *
- * Dedicated provider for UHDMovies (https://uhdmovies.us.org/)
+ * Dedicated provider for UHDMovies (https://uhdmovies.ceo/)
  * Supports 4K UHD 2160p HDR, 1080p 10-Bit HEVC, and 720p Dual/Multi Audio.
  *
  * Features:
  *  - Native 4-step LinkPilot Decryptor gateway bypass (thenaukriadda.in).
  *  - High-speed direct streaming via Google Cloud CDN (video-downloads.googleusercontent.com).
  *  - Multi-season and arbitrary episode targeting for TV Series and Web Series.
- *  - Full compatibility with Android QuickJS runtime (no Node Buffer, pure fetch).
+ *  - Full compatibility with Android QuickJS runtime (pure atob, pure fetch).
  *  - Formatted strictly for MatchScorer.kt (+0.25 SxxExx episode bonus for TV, clean (Year) for movies).
  */
 
 /* =========================================================================
    CONFIG BLOCK: If site changes domain, update ONLY the URLs in this block.
    ========================================================================= */
-var BASE_URL = 'https://uhdmovies.us.org';
+var BASE_URL = 'https://uhdmovies.ceo';
+var BACKUP_URLS = [
+    'https://uhdmovies.ceo',
+    'https://uhdmovies.us.org',
+    'https://uhdmovies.media'
+];
 var TMDB_PROXY_URL = 'https://db.wecollege.net/3';
 /* ========================================================================= */
 
@@ -104,12 +109,28 @@ function parseAudio(text) {
     }
 
     if (isMulti || distinct.length > 1) {
-        return distinct.length > 0 ? '[MULTI] [' + distinct.join(' · ') + ']' : '[MULTI]';
+        return {
+            isMulti: true,
+            primary: 'Multi',
+            tag: 'MULTI',
+            badge: distinct.length > 0 ? '[MULTI] [' + distinct.join(' · ') + ']' : '[MULTI]'
+        };
     }
     if (distinct.length === 1) {
-        return '[' + distinct[0] + ']';
+        var tag = distinct[0];
+        return {
+            isMulti: false,
+            primary: tag === 'HIN' ? 'Hindi' : (tag === 'ENG' ? 'English' : tag),
+            tag: tag,
+            badge: '[' + tag + ']'
+        };
     }
-    return '[ENG]';
+    return {
+        isMulti: false,
+        primary: 'English',
+        tag: 'ENG',
+        badge: '[ENG]'
+    };
 }
 
 /**
@@ -245,6 +266,7 @@ async function searchPost(title, year, isMovie) {
 
 /**
  * Resolve intermediate LinkPilot Decryptor gateway (thenaukriadda.in) to DriveSeed URL.
+ * Optimized with 5s per-step timeout to prevent rate-limit drops and maximize throughput.
  */
 async function resolveNaukriAdda(sidUrl) {
     // Step 1: GET sid URL
@@ -253,7 +275,7 @@ async function resolveNaukriAdda(sidUrl) {
             'User-Agent': USER_AGENT,
             'Referer': BASE_URL + '/'
         }
-    }, 7000);
+    }, 6000);
     var html1 = await resp1.text();
     var finalUrl1 = resp1.url || sidUrl;
 
@@ -277,7 +299,7 @@ async function resolveNaukriAdda(sidUrl) {
             'Referer': finalUrl1
         },
         body: form1Params.join('&')
-    }, 7000);
+    }, 6000);
     var html2 = await resp2.text();
     var finalUrl2 = resp2.url || form1Action;
 
@@ -300,7 +322,7 @@ async function resolveNaukriAdda(sidUrl) {
             'Referer': finalUrl2
         },
         body: form2Params.join('&')
-    }, 7000);
+    }, 6000);
     var html3 = await resp3.text();
     var finalUrl3 = resp3.url || form2Action;
 
@@ -322,7 +344,7 @@ async function resolveNaukriAdda(sidUrl) {
             'Referer': finalUrl3,
             'Cookie': cookieName + '=' + cookieVal
         }
-    }, 7000);
+    }, 6000);
     var html4 = await resp4.text();
 
     var destMatch = html4.match(/window\.location\.replace\(\s*['"]([^'"]+)['"]\s*\)/i) ||
@@ -346,7 +368,7 @@ async function analyzeCloudStreamHealth(streamUrl) {
                 'Range': 'bytes=0-0'
             },
             redirect: 'follow'
-        }, 4000);
+        }, 3500);
 
         if (probeRes.status === 403 || probeRes.status === 404 || probeRes.status === 410 ||
             (probeRes.status >= 500 && probeRes.status <= 599)) {
@@ -384,16 +406,14 @@ async function resolveDriveSeed(driveSeedRUrl) {
     if (loc5 && loc5.indexOf('/file/') !== -1) {
         fileUrl = loc5.startsWith('http') ? loc5 : ('https://driveseed.org' + loc5);
     } else {
-        var cType5 = (resp5.headers && resp5.headers.get('content-type')) || '';
-        if (cType5.toLowerCase().indexOf('text/html') !== -1) {
-            var html5 = await resp5.text();
-            var fileRedirectMatch = html5.match(/window\.location\.replace\(\s*['"](\/file\/[^'"]+)['"]\s*\)/i) ||
-                                   html5.match(/['"](\/file\/[a-zA-Z0-9_-]+)['"]/i);
-            if (fileRedirectMatch) {
-                fileUrl = 'https://driveseed.org' + fileRedirectMatch[1];
-            } else if (resp5.url && resp5.url.indexOf('/file/') !== -1) {
-                fileUrl = resp5.url;
-            }
+        var html5 = await resp5.text();
+        var fileRedirectMatch = html5.match(/window\.location\.replace\(\s*['"](\/file\/[^'"]+)['"]\s*\)/i) ||
+                               html5.match(/href=['"]([^'"]*\/file\/[^'"]+)['"]/i) ||
+                               html5.match(/['"](\/file\/[a-zA-Z0-9_-]+)['"]/i);
+        if (fileRedirectMatch) {
+            fileUrl = fileRedirectMatch[1].startsWith('http') ? fileRedirectMatch[1] : ('https://driveseed.org' + fileRedirectMatch[1]);
+        } else if (resp5.url && resp5.url.indexOf('/file/') !== -1) {
+            fileUrl = resp5.url;
         }
     }
     if (!fileUrl) {
@@ -411,9 +431,15 @@ async function resolveDriveSeed(driveSeedRUrl) {
 
     var instantMatch = html6.match(/href=['"](https:\/\/[^'"]*cdn\.video-gen\.xyz\/[^'"]+)['"]/i) ||
                       html6.match(/href=['"](https:\/\/[^'"]*video-gen[^'"]+)['"]/i) ||
-                      html6.match(/href=['"](https:\/\/[^'"]*cdn\.video-[^'"]+)['"]/i);
+                      html6.match(/href=['"](https:\/\/[^'"]*cdn\.video-[^'"]+)['"]/i) ||
+                      html6.match(/href=['"](https:\/\/[^'"]*googleusercontent\.com\/[^'"]+)['"]/i);
     if (!instantMatch) throw new Error('Instant Download link not found on DriveSeed file page');
     var instantUrl = instantMatch[1];
+
+    if (instantUrl.indexOf('googleusercontent.com') !== -1) {
+        var healthy = await analyzeCloudStreamHealth(instantUrl);
+        if (healthy) return instantUrl;
+    }
 
     // Step 7: Request Instant Download URL (redirects to video-seed.dev/?url=...)
     var resp7 = await safeFetch(instantUrl, {
@@ -422,7 +448,7 @@ async function resolveDriveSeed(driveSeedRUrl) {
             'Referer': fileUrl
         },
         redirect: 'manual'
-    }, 8000);
+    }, 6000);
     var loc7 = resp7.headers && (resp7.headers.get('location') || resp7.headers.get('Location'));
     var finalUrl7 = loc7 || resp7.url || '';
 
@@ -437,13 +463,11 @@ async function resolveDriveSeed(driveSeedRUrl) {
         streamUrl = finalUrl7;
     }
     if (!streamUrl) {
-        var cType7 = (resp7.headers && resp7.headers.get('content-type')) || '';
-        if (cType7.toLowerCase().indexOf('text/html') !== -1) {
-            var html7 = await resp7.text();
-            var urlParamMatch = html7.match(/['"](https:\/\/[^'"]*googleusercontent\.com\/[^'"]+)['"]/i);
-            if (urlParamMatch) {
-                streamUrl = urlParamMatch[1];
-            }
+        var html7 = await resp7.text();
+        var urlParamMatch = html7.match(/['"](https:\/\/[^'"]*googleusercontent\.com\/[^'"]+)['"]/i) ||
+                            html7.match(/href=['"](https:\/\/[^'"]*googleusercontent\.com\/[^'"]+)['"]/i);
+        if (urlParamMatch) {
+            streamUrl = urlParamMatch[1];
         } else if (finalUrl7 !== instantUrl && /^https?:\/\//i.test(finalUrl7)) {
             streamUrl = finalUrl7;
         }
@@ -461,6 +485,7 @@ async function resolveDriveSeed(driveSeedRUrl) {
 
 /**
  * Extract movie download candidate links from post HTML.
+ * Prioritizes distinct quality tiers (2160p, 1080p, 720p, 480p) to avoid redundant gateway requests.
  */
 function extractMovieLinks(html, postTitle) {
     var candidates = [];
@@ -506,11 +531,31 @@ function extractMovieLinks(html, postTitle) {
     uniqueCandidates.sort(function(a, b) {
         return (QUALITY_WEIGHTS[b.quality] || 0) - (QUALITY_WEIGHTS[a.quality] || 0);
     });
-    return uniqueCandidates.slice(0, 6);
+
+    // Pick top candidates prioritizing distinct quality tiers (up to 4)
+    var distinctByQuality = [];
+    var seenQualities = {};
+    for (var q = 0; q < uniqueCandidates.length; q++) {
+        var uc = uniqueCandidates[q];
+        if (!seenQualities[uc.quality]) {
+            seenQualities[uc.quality] = true;
+            distinctByQuality.push(uc);
+        }
+    }
+    if (distinctByQuality.length < 4) {
+        for (var r = 0; r < uniqueCandidates.length; r++) {
+            if (distinctByQuality.indexOf(uniqueCandidates[r]) === -1) {
+                distinctByQuality.push(uniqueCandidates[r]);
+                if (distinctByQuality.length >= 4) break;
+            }
+        }
+    }
+    return distinctByQuality.slice(0, 4);
 }
 
 /**
  * Extract TV episode download candidate links from post HTML.
+ * Prioritizes distinct quality tiers (up to 4) for high speed and full coverage.
  */
 function extractTvLinks(fullHtml, seasonNum, episodeNum, postTitle) {
     var entryContentMatch = fullHtml.match(/<div[^>]*class=["'][^"']*entry-content[^"']*["'][^>]*>([\s\S]*?)<\/div>\s*<!-- \.entry-content -->/i) ||
@@ -585,7 +630,25 @@ function extractTvLinks(fullHtml, seasonNum, episodeNum, postTitle) {
     uniqueTv.sort(function(a, b) {
         return (QUALITY_WEIGHTS[b.quality] || 0) - (QUALITY_WEIGHTS[a.quality] || 0);
     });
-    return uniqueTv.slice(0, 6);
+
+    var distinctTvByQuality = [];
+    var seenTvQualities = {};
+    for (var tq = 0; tq < uniqueTv.length; tq++) {
+        var ut = uniqueTv[tq];
+        if (!seenTvQualities[ut.quality]) {
+            seenTvQualities[ut.quality] = true;
+            distinctTvByQuality.push(ut);
+        }
+    }
+    if (distinctTvByQuality.length < 4) {
+        for (var tr = 0; tr < uniqueTv.length; tr++) {
+            if (distinctTvByQuality.indexOf(uniqueTv[tr]) === -1) {
+                distinctTvByQuality.push(uniqueTv[tr]);
+                if (distinctTvByQuality.length >= 4) break;
+            }
+        }
+    }
+    return distinctTvByQuality.slice(0, 4);
 }
 
 /**
@@ -631,48 +694,52 @@ async function getStreams(tmdbId, mediaType, season, episode, extraArgs) {
 
         console.log('[UHDMovies] Found ' + candidates.length + ' quality candidates. Resolving streams...');
 
-        // Resolve candidates concurrently
-        var streamPromises = candidates.map(async function(c) {
+        var streams = [];
+        for (var ci = 0; ci < candidates.length; ci++) {
+            var c = candidates[ci];
             try {
                 var driveSeedRUrl = await resolveNaukriAdda(c.url);
                 var streamUrl = await resolveDriveSeed(driveSeedRUrl);
-                if (!streamUrl) return null;
+                if (streamUrl) {
+                    var streamTitle = isMovie ?
+                        meta.title + (meta.year ? ' (' + meta.year + ')' : '') + ' ' + c.audio.badge + ' - UHDMovies Google CDN [' + c.quality + ']' :
+                        meta.title + ' S' + pad(sNum, 2) + 'E' + pad(eNum, 2) + ' ' + c.audio.badge + ' - UHDMovies Google CDN [' + c.quality + ']';
 
-                // Build title strictly formatted for MatchScorer.kt
-                var streamTitle = isMovie ?
-                    meta.title + (meta.year ? ' (' + meta.year + ')' : '') + ' ' + c.audio + ' - UHDMovies [' + c.quality + ']' :
-                    meta.title + ' S' + pad(sNum, 2) + 'E' + pad(eNum, 2) + ' ' + c.audio + ' - UHDMovies [' + c.quality + ']';
+                    var serverName = 'UHDMovies | Google CDN • ' + c.audio.badge + ' (' + c.quality + ')';
+                    var isHls = streamUrl.indexOf('.m3u8') >= 0;
+                    var isMkv = streamUrl.indexOf('.mkv') >= 0 || streamUrl.indexOf('googleusercontent.com') >= 0;
+                    var streamFormat = isHls ? 'm3u8' : (isMkv ? 'mkv' : 'mp4');
 
-                var serverName = 'UHDMovies | Google CDN • ' + c.audio + ' (' + c.quality + ')';
-
-                var isHls = streamUrl.indexOf('.m3u8') >= 0;
-                var isMkv = streamUrl.indexOf('.mkv') >= 0;
-                var streamFormat = isHls ? 'm3u8' : (isMkv ? 'mkv' : 'mp4');
-
-                return {
-                    name: serverName,
-                    title: streamTitle,
-                    rawTitle: post.title,
-                    url: streamUrl,
-                    quality: c.quality,
-                    size: c.size || (isMovie ? '2.5 GB' : '1.2 GB'),
-                    type: streamFormat === 'mkv' ? 'mp4' : streamFormat,
-                    format: streamFormat,
-                    container: streamFormat,
-                    isSequential: streamFormat === 'mp4' || streamFormat === 'mkv',
-                    provider: 'uhdmovies',
-                    headers: {
-                        'User-Agent': USER_AGENT
-                    }
-                };
+                    streams.push({
+                        name: serverName,
+                        title: streamTitle,
+                        rawTitle: post.title,
+                        url: streamUrl,
+                        quality: c.quality,
+                        size: c.size || (isMovie ? '2.5 GB' : '1.2 GB'),
+                        type: streamFormat === 'mkv' ? 'mp4' : streamFormat,
+                        format: streamFormat,
+                        container: streamFormat,
+                        isSequential: streamFormat === 'mp4' || streamFormat === 'mkv',
+                        provider: 'uhdmovies',
+                        language: (c.audio.tag || 'eng').toLowerCase(),
+                        headers: {
+                            'User-Agent': USER_AGENT
+                        },
+                        audio: {
+                            isMulti: c.audio.isMulti,
+                            primary: c.audio.primary,
+                            tag: c.audio.tag,
+                            badge: c.audio.badge
+                        }
+                    });
+                    console.log('[UHDMovies] Resolved stream for quality ' + c.quality);
+                    if (streams.length >= 2) break; // We have achieved top quality tiers (4K / 1080p)
+                }
             } catch (err) {
                 console.error('[UHDMovies] Candidate (' + c.quality + ') resolution failed:', err.message);
-                return null;
             }
-        });
-
-        var settled = await Promise.all(streamPromises);
-        var streams = settled.filter(Boolean);
+        }
 
         // Sort qualities: 2160p > 1080p > 720p > 480p
         streams.sort(function(a, b) {

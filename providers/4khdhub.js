@@ -10,7 +10,7 @@
  *  - 4KHDHub | ZipDisk Server (Cloudflare Edge Direct Stream)
  *  - 4KHDHub | Pixeldrain Server (Direct Stream CDN)
  *
- * Compatible with Android QuickJS runtime (pure atob, no Node.js Buffer, no AbortSignal.timeout).
+ * Compatible with Android QuickJS runtime (pure atob, zero native node libs).
  * Formatted specifically for MatchScorer.kt:
  *  - TV / Series / Anime: "Title SxxExx [Audio] - Server [Quality]" (+0.25 episode bonus)
  *  - Movies: "Title (Year) [Audio] - Server [Quality]" (clean movie match)
@@ -26,21 +26,22 @@ var DEFAULT_HEADERS = {
 };
 
 function safeFetch(url, options, timeoutMs) {
-    timeoutMs = timeoutMs || 7000;
-    var controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
-    var timer = null;
-    var opts = Object.assign({}, options);
-    if (controller) {
-        opts.signal = controller.signal;
+    timeoutMs = timeoutMs || 8000;
+    var timer;
+    var timeoutPromise = new Promise(function(_, reject) {
         timer = setTimeout(function() {
-            try { controller.abort(); } catch (_) {}
+            reject(new Error('Request timed out: ' + url));
         }, timeoutMs);
-    }
-    return fetch(url, opts).then(function(res) {
-        if (timer) clearTimeout(timer);
+    });
+
+    return Promise.race([
+        fetch(url, options),
+        timeoutPromise
+    ]).then(function(res) {
+        clearTimeout(timer);
         return res;
-    }).catch(function(err) {
-        if (timer) clearTimeout(timer);
+    }, function(err) {
+        clearTimeout(timer);
         throw err;
     });
 }
@@ -165,12 +166,13 @@ function rot13(str) {
 }
 
 function decodeB64(str) {
-    if (typeof atob === 'function') {
-        return atob(str);
-    }
-    if (typeof Buffer !== 'undefined') {
-        return Buffer.from(str, 'base64').toString('utf8');
-    }
+    try {
+        if (typeof atob === 'function') {
+            var b64 = String(str || '').replace(/-/g, '+').replace(/_/g, '/');
+            while (b64.length % 4) b64 += '=';
+            return atob(b64);
+        }
+    } catch (_) {}
     return '';
 }
 
@@ -253,9 +255,8 @@ async function resolvePixelCloud(pixelUrl) {
 
 
 async function analyzeCloudStreamHealth(streamUrl) {
-    if (!streamUrl) return false;
+    if (!streamUrl || typeof streamUrl !== 'string' || !/^https?:\/\//i.test(streamUrl)) return false;
     try {
-        // Probe cloud stream with Range header: bytes=0-0 to prevent downloading full video
         var probeRes = await safeFetch(streamUrl, {
             method: 'GET',
             headers: {
@@ -265,23 +266,23 @@ async function analyzeCloudStreamHealth(streamUrl) {
             redirect: 'follow'
         }, 3500);
 
-        // 1. Detect HTTP 500, 502, 503, 504 server errors on cloud/worker hosts
-        if (probeRes.status >= 500 && probeRes.status <= 599) {
-            console.log('[4KHDHub Analyzer] Cloud host returned HTTP ' + probeRes.status + ' (' + streamUrl.substring(0, 50) + '...). Temporarily filtering out until revived.');
+        if (probeRes.status === 403 || probeRes.status === 404 || probeRes.status === 410 ||
+            (probeRes.status >= 500 && probeRes.status <= 599)) {
+            console.log('[4KHDHub Analyzer] Cloud host returned HTTP ' + probeRes.status + ' (' + streamUrl.substring(0, 50) + '...). Filtering out.');
             return false;
         }
 
-        // 2. Detect HTML landing pages masquerading as media streams (ad-gates / link generators)
         var cType = (probeRes.headers && (probeRes.headers.get('content-type') || probeRes.headers.get('Content-Type'))) || '';
-        if (cType.toLowerCase().indexOf('text/html') >= 0 && probeRes.status === 200) {
-            console.log('[4KHDHub Analyzer] Cloud host returned HTML page instead of video (' + streamUrl.substring(0, 50) + '...). Filtering out.');
+        var lowerCt = cType.toLowerCase();
+        if ((lowerCt.indexOf('text/html') >= 0 || lowerCt.indexOf('application/json') >= 0) &&
+            (probeRes.status === 200 || probeRes.status === 206)) {
+            console.log('[4KHDHub Analyzer] Cloud host returned non-media ' + cType + ' (' + streamUrl.substring(0, 50) + '...). Filtering out.');
             return false;
         }
 
         return true;
     } catch (e) {
-        // Network timeout / drop: preserve source so transient flakes do not discard valid servers
-        return true;
+        return false;
     }
 }
 
@@ -314,28 +315,34 @@ async function resolveHubCloud(hubUrl) {
 
         var servers = [];
         var seenUrls = {};
+        var asyncTasks = [];
 
         // 1. Dynamic Pixeldrain extraction (bypasses anti-DMCA decoy link negn6f)
         var pxlMatch = gText.match(/var\s+pxl\s*=\s*['"](https?:\/\/[^'"]*\/u\/([a-zA-Z0-9_-]+))['"]/i) ||
                        gText.match(/var\s+pxl\s*=\s*['"](https?:\/\/[^'"]*pixeldrain[^'"]*)['"]/i);
         if (pxlMatch) {
             var rawPxl = pxlMatch[1];
-            var pxlDirect = rawPxl.replace(/\/u\/([a-zA-Z0-9_-]+)/, '/api/file/$1')
+            var pxlDirect = rawPxl.replace(/\/u\/([a-zA-Z0-9_-]+)/, '/api/file/$1?download')
                                   .replace('pixeldrain.dev', 'pixeldrain.com');
-            servers.push({
-                serverName: 'Pixeldrain',
-                displayName: 'Pixeldrain Server',
-                url: pxlDirect,
-                priority: 2,
-                headers: {
-                    'User-Agent': DEFAULT_HEADERS['User-Agent']
-                }
-            });
+            (function(pUrl) {
+                asyncTasks.push(analyzeCloudStreamHealth(pUrl).then(function(isHealthy) {
+                    if (isHealthy) {
+                        servers.push({
+                            serverName: 'Pixeldrain',
+                            displayName: 'Pixeldrain Server',
+                            url: pUrl,
+                            priority: 2,
+                            headers: {
+                                'User-Agent': DEFAULT_HEADERS['User-Agent']
+                            }
+                        });
+                    }
+                }).catch(function() {}));
+            })(pxlDirect);
             seenUrls[rawPxl] = true;
             seenUrls[pxlDirect] = true;
         }
 
-        var asyncTasks = [];
         var aRegex = /<a[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/gi;
         var match;
         while ((match = aRegex.exec(gText)) !== null) {
@@ -356,17 +363,23 @@ async function resolveHubCloud(hubUrl) {
                 });
             } else if (label.indexOf('PixelServer') >= 0 || href.indexOf('pixeldrain') >= 0) {
                 if (href.indexOf('negn6f') >= 0) continue;
-                var directPixeldrain = href.replace(/\/u\/([a-zA-Z0-9_-]+)/, '/api/file/$1')
+                var directPixeldrain = href.replace(/\/u\/([a-zA-Z0-9_-]+)/, '/api/file/$1?download')
                                            .replace('pixeldrain.dev', 'pixeldrain.com');
-                servers.push({
-                    serverName: 'Pixeldrain',
-                    displayName: 'Pixeldrain Server',
-                    url: directPixeldrain,
-                    priority: 2,
-                    headers: {
-                        'User-Agent': DEFAULT_HEADERS['User-Agent']
-                    }
-                });
+                (function(pUrl) {
+                    asyncTasks.push(analyzeCloudStreamHealth(pUrl).then(function(isHealthy) {
+                        if (isHealthy) {
+                            servers.push({
+                                serverName: 'Pixeldrain',
+                                displayName: 'Pixeldrain Server',
+                                url: pUrl,
+                                priority: 2,
+                                headers: {
+                                    'User-Agent': DEFAULT_HEADERS['User-Agent']
+                                }
+                            });
+                        }
+                    }).catch(function() {}));
+                })(directPixeldrain);
             } else if (label.indexOf('ZipDisk') >= 0 || href.indexOf('workers.dev') >= 0) {
                 (function(zh) {
                     asyncTasks.push(analyzeCloudStreamHealth(zh).then(function(isHealthy) {
@@ -383,7 +396,7 @@ async function resolveHubCloud(hubUrl) {
                         }
                     }).catch(function() {}));
                 })(href);
-            } else if (label.indexOf('10Gbps') >= 0 || href.indexOf('pixel.hubcloud.ist') >= 0 || href.indexOf('gpdl.hubcloud.ist') >= 0) {
+            } else if (label.indexOf('10Gbps') >= 0 || /pixel\.hubcloud\.[a-z0-9]+/i.test(href) || /gpdl\.hubcloud\.[a-z0-9]+/i.test(href)) {
                 (function(h) {
                     asyncTasks.push(resolvePixelCloud(h).then(async function(directPixel) {
                         if (directPixel) {
@@ -402,6 +415,29 @@ async function resolveHubCloud(hubUrl) {
                         }
                     }).catch(function() {}));
                 })(href);
+            } else if (label.indexOf('Watch Online') >= 0 || href.indexOf('hbplay.pages.dev') >= 0) {
+                var uMatch = href.match(/[?&]u=([a-zA-Z0-9+/=]+)/);
+                if (uMatch) {
+                    var decodedStream = decodeB64(uMatch[1]);
+                    if (decodedStream && /^https?:\/\//i.test(decodedStream) && !seenUrls[decodedStream]) {
+                        seenUrls[decodedStream] = true;
+                        (function(dsUrl) {
+                            asyncTasks.push(analyzeCloudStreamHealth(dsUrl).then(function(isHealthy) {
+                                if (isHealthy) {
+                                    servers.push({
+                                        serverName: 'FSL R2',
+                                        displayName: 'FSL R2 Server',
+                                        url: dsUrl,
+                                        priority: 1,
+                                        headers: {
+                                            'User-Agent': DEFAULT_HEADERS['User-Agent']
+                                        }
+                                    });
+                                }
+                            }).catch(function() {}));
+                        })(decodedStream);
+                    }
+                }
             }
         }
         if (asyncTasks.length > 0) {

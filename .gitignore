@@ -1,0 +1,23 @@
+# Euthopiar Plugins - Clean Public Repository Ignores
+sandbox/
+test_*.js
+*.log
+*.tmp
+.temp_scrapers.json
+
+# Strip all AI assistant & local workflow files
+.agents/
+.agent-context/
+.cursorrules
+AI_RULES.md
+GEMINI.md
+CLAUDE.md
+PLUGIN_AI_RULES.md
+.DS_Store
+Thumbs.db
+__pycache__/
+
+# Local test harness
+server.js
+index.html
+audit_verification_results.json

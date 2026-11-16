@@ -29,6 +29,28 @@ const CIPHER_CONSTANTS = [
 ];
 const MAGIC_HEADER = [109, 118, 109, 49]; // "mvm1"
 
+async function fetchWithTimeout(url, options, timeoutMs) {
+    timeoutMs = timeoutMs || 5000;
+    var timer;
+    var timeoutPromise = new Promise(function(_, reject) {
+        timer = setTimeout(function() {
+            reject(new Error('Request timeout (' + timeoutMs + 'ms)'));
+        }, timeoutMs);
+    });
+
+    try {
+        var res = await Promise.race([
+            fetch(url, options),
+            timeoutPromise
+        ]);
+        clearTimeout(timer);
+        return res;
+    } catch (err) {
+        clearTimeout(timer);
+        throw err;
+    }
+}
+
 function mixMurmur(e) {
     e >>>= 0;
     e ^= e >>> 16;
@@ -149,8 +171,9 @@ async function fetchSeed(tmdbId, forceRefresh = false) {
             const headers = Object.assign({}, DEFAULT_HEADERS, {
                 'X-Forwarded-For': clientIp
             });
-
-            const res = await fetch(STREAM_API_URL + '/seed?mediaId=' + encodeURIComponent(tmdbId), { headers });
+            const res = await fetchWithTimeout(STREAM_API_URL + '/seed?mediaId=' + encodeURIComponent(tmdbId), {
+                headers: headers
+            }, 6000);
             if (!res.ok) {
                 throw new Error('Failed to obtain seed: HTTP ' + res.status);
             }
@@ -203,20 +226,20 @@ function getLanguageInfo(code) {
 }
 
 // Metadata resolution helper
-async function resolveMetadata(tmdbId, mediaType) {
-    const extraArgs = (typeof globalThis !== 'undefined' && globalThis.__CALL_ARGS__) || {};
+async function resolveMetadata(tmdbId, mediaType, extraArgs) {
+    extraArgs = extraArgs || {};
     let title = extraArgs.title || extraArgs.name || '';
     let year = extraArgs.year || (extraArgs.releaseDate ? extraArgs.releaseDate.substring(0, 4) : '');
     let imdbId = extraArgs.imdbId || '';
     let totalSeasons = extraArgs.totalSeasons || '';
     let origLang = extraArgs.originalLanguage || extraArgs.original_language || '';
 
-    if (!title || !year || !origLang) {
+    if (!title || !year || !origLang || (!imdbId && mediaType !== 'movie')) {
         try {
             const tmdbType = mediaType === 'movie' ? 'movie' : 'tv';
-            const metaRes = await fetch(TMDB_PROXY_URL + '/' + tmdbType + '/' + tmdbId, {
+            const metaRes = await fetchWithTimeout(TMDB_PROXY_URL + '/' + tmdbType + '/' + tmdbId, {
                 headers: DEFAULT_HEADERS
-            });
+            }, 3500);
             if (metaRes.ok) {
                 const meta = await metaRes.json();
                 title = title || meta.title || meta.name || '';
@@ -225,6 +248,15 @@ async function resolveMetadata(tmdbId, mediaType) {
                 imdbId = imdbId || meta.imdb_id || (meta.external_ids ? meta.external_ids.imdb_id : '') || '';
                 totalSeasons = totalSeasons || meta.number_of_seasons || '';
                 origLang = origLang || meta.original_language || '';
+            }
+            if (!imdbId && tmdbType === 'tv') {
+                const extRes = await fetchWithTimeout(TMDB_PROXY_URL + '/tv/' + tmdbId + '/external_ids', {
+                    headers: DEFAULT_HEADERS
+                }, 2500);
+                if (extRes.ok) {
+                    const extMeta = await extRes.json();
+                    if (extMeta && extMeta.imdb_id) imdbId = extMeta.imdb_id;
+                }
             }
         } catch (e) {
             console.log('[Movy] Metadata fallback lookup failed: ' + e.message);
@@ -240,7 +272,7 @@ async function resolveMetadata(tmdbId, mediaType) {
     };
 }
 
-// Complete list of all 18 server providers reverse-engineered from Movy Next.js bundles
+// Active responsive server endpoints discovered from Movy Next.js bundles
 const SERVERS = [
     { name: 'Miami', endpoint: 'miami', dubbedLanguage: null },
     { name: 'Boise', endpoint: 'boise', dubbedLanguage: null },
@@ -253,8 +285,6 @@ const SERVERS = [
     { name: 'Dallas', endpoint: 'dallas', dubbedLanguage: null },
     { name: 'Portland', endpoint: 'portland', dubbedLanguage: null },
     { name: 'Austin', endpoint: 'austin', dubbedLanguage: null },
-    { name: 'Tampa', endpoint: 'tampa', dubbedLanguage: null },
-    { name: 'Orlando', endpoint: 'orlando', dubbedLanguage: null },
     { name: 'Munich', endpoint: 'munich', dubbedLanguage: 'de', extraParams: { language: 'german' } },
     { name: 'Berlin', endpoint: 'berlin', dubbedLanguage: 'de' },
     { name: 'Paris', endpoint: 'paris', dubbedLanguage: 'fr' },
@@ -262,13 +292,7 @@ const SERVERS = [
     { name: 'Cancun', endpoint: 'cancun', dubbedLanguage: 'es' }
 ];
 
-async function queryServer(server, params, tmdbId, seed, timeoutMs, serverIndex) {
-    const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
-    let timer = null;
-    if (controller) {
-        timer = setTimeout(() => controller.abort(), timeoutMs || 8000);
-    }
-
+async function queryServer(server, params, tmdbId, seed, timeoutMs) {
     try {
         const sp = new URLSearchParams();
         for (const k in params) {
@@ -290,16 +314,9 @@ async function queryServer(server, params, tmdbId, seed, timeoutMs, serverIndex)
         sp.set('seed', seed);
 
         const url = STREAM_API_URL + '/' + server.endpoint + '/sources?' + sp.toString();
-        const sIdx = (typeof serverIndex === 'number') ? serverIndex : 0;
-        const clientIp = '104.28.19.' + ((Math.abs(Number(tmdbId) || 1) + sIdx * 7) % 250 + 1);
-        const headers = Object.assign({}, DEFAULT_HEADERS, {
-            'X-Forwarded-For': clientIp
-        });
+        const fetchOptions = { headers: Object.assign({}, DEFAULT_HEADERS) };
 
-        const fetchOptions = { headers };
-        if (controller) fetchOptions.signal = controller.signal;
-
-        let res = await fetch(url, fetchOptions);
+        let res = await fetchWithTimeout(url, fetchOptions, timeoutMs || 3000);
 
         // 401 triggers seed refresh and single retry
         if (res.status === 401) {
@@ -307,7 +324,7 @@ async function queryServer(server, params, tmdbId, seed, timeoutMs, serverIndex)
             const freshSeed = await fetchSeed(tmdbId, true);
             sp.set('seed', freshSeed);
             const retryUrl = STREAM_API_URL + '/' + server.endpoint + '/sources?' + sp.toString();
-            res = await fetch(retryUrl, fetchOptions);
+            res = await fetchWithTimeout(retryUrl, fetchOptions, timeoutMs || 3000);
             seed = freshSeed;
         }
 
@@ -446,14 +463,8 @@ async function queryServer(server, params, tmdbId, seed, timeoutMs, serverIndex)
         console.log('[Movy] Server ' + server.name + ' (' + baseAudio + ') returned ' + streams.length + ' stream(s), ' + mappedSubs.length + ' sub(s)');
         return { streams, subtitles: mappedSubs };
     } catch (err) {
-        if (err.name === 'AbortError') {
-            console.log('[Movy] Server ' + server.name + ' timed out (8s)');
-        } else {
-            console.error('[Movy] Server ' + server.name + ' error: ' + err.message);
-        }
+        console.log('[Movy] Server ' + server.name + ' finished: ' + err.message);
         return { streams: [], subtitles: [] };
-    } finally {
-        if (timer) clearTimeout(timer);
     }
 }
 
@@ -464,9 +475,13 @@ async function queryServer(server, params, tmdbId, seed, timeoutMs, serverIndex)
  * @param {string} mediaType - 'movie', 'tv', or 'anime'
  * @param {number} [season] - Season number for episodic content
  * @param {number} [episode] - Episode number for episodic content
+ * @param {Object} [extraArgs] - Extra arguments from app or test harness
  * @returns {Promise<Array<Object>>}
  */
-async function getStreams(tmdbId, mediaType, season, episode) {
+async function getStreams(tmdbId, mediaType, season, episode, extraArgs) {
+    var callArgs = (typeof globalThis !== 'undefined' && globalThis.__CALL_ARGS__) || {};
+    extraArgs = Object.assign({}, callArgs, extraArgs || {});
+
     console.log('[Movy] Fetching streams for ' + mediaType + ' ID: ' + tmdbId + ' (S:' + season + ' E:' + episode + ')');
 
     if (!tmdbId) {
@@ -476,8 +491,24 @@ async function getStreams(tmdbId, mediaType, season, episode) {
 
     try {
         const isMovie = mediaType === 'movie';
-        const meta = await resolveMetadata(tmdbId, mediaType);
-        console.log('[Movy] Resolved metadata: "' + meta.title + '" (' + meta.year + '), Original Language: ' + meta.originalLanguage);
+        // Concurrently resolve metadata and fetch seed
+        const metaPromise = resolveMetadata(tmdbId, mediaType, extraArgs);
+        const seedPromise = fetchSeed(tmdbId);
+
+        let meta, seed;
+        try {
+            [meta, seed] = await Promise.all([metaPromise, seedPromise]);
+        } catch (initErr) {
+            console.error('[Movy] Initialization error: ' + initErr.message);
+            return [];
+        }
+
+        if (!seed) {
+            console.error('[Movy] Failed to acquire seed token');
+            return [];
+        }
+
+        console.log('[Movy] Resolved metadata: "' + meta.title + '" (' + meta.year + '), Original Language: ' + meta.originalLanguage + ', IMDB: ' + meta.imdbId);
 
         const params = {
             title: meta.title,
@@ -496,16 +527,8 @@ async function getStreams(tmdbId, mediaType, season, episode) {
             params.episode = episode != null ? Number(episode) : 1;
         }
 
-        let seed;
-        try {
-            seed = await fetchSeed(tmdbId);
-        } catch (seedErr) {
-            console.error('[Movy] Seed acquisition error: ' + seedErr.message);
-            return [];
-        }
-
-        // Query all servers in parallel with 8s individual timeout
-        const serverPromises = SERVERS.map((srv, idx) => queryServer(srv, params, tmdbId, seed, 8000, idx));
+        // Query all active servers in parallel with 3.8s individual timeout
+        const serverPromises = SERVERS.map((srv) => queryServer(srv, params, tmdbId, seed, 3800));
         const serverResults = await Promise.all(serverPromises);
 
         const allStreams = [];

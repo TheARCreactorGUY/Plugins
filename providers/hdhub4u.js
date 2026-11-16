@@ -241,7 +241,10 @@ async function getActiveBaseUrl() {
                 var json = await res.json();
                 if (json && json.info && json.info.c) {
                     var rawB64 = json.info.c.replace(/\\/g, '');
-                    var decoded = typeof atob === 'function' ? atob(rawB64) : Buffer.from(rawB64, 'base64').toString('utf8');
+                    var decoded = '';
+                    if (typeof atob === 'function') {
+                        try { decoded = atob(rawB64); } catch (_) {}
+                    }
                     if (decoded && /^https?:\/\//i.test(decoded)) {
                         cachedBaseUrl = decoded.replace(/\/+$/, '');
                         lastBaseUrlCheck = now;
@@ -350,8 +353,13 @@ function gmRot13(str) {
 }
 
 function gmDecodeB64(str) {
-    if (typeof atob === 'function') return atob(str);
-    if (typeof Buffer !== 'undefined') return Buffer.from(str, 'base64').toString('utf8');
+    if (typeof atob === 'function') {
+        try {
+            var b64 = String(str || '').replace(/-/g, '+').replace(/_/g, '/');
+            while (b64.length % 4) b64 += '=';
+            return atob(b64);
+        } catch (_) {}
+    }
     return '';
 }
 
@@ -498,7 +506,7 @@ async function analyzeCloudStreamHealth(streamUrl) {
             console.log('[HDHub4u Analyzer] Skipping archive payload (' + cType + '): ' + streamUrl.substring(0, 50) + '...');
             return false;
         }
-        if ((lowerCt.indexOf('text/html') >= 0 || lowerCt.indexOf('application/json') >= 0) &&
+        if ((lowerCt.indexOf('text/') >= 0 || lowerCt.indexOf('application/json') >= 0) &&
             (probeRes.status === 200 || probeRes.status === 206)) {
             console.log('[HDHub4u Analyzer] Cloud host returned non-media ' + cType + ' (' + streamUrl.substring(0, 50) + '...). Filtering out.');
             return false;

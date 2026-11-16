@@ -13,7 +13,7 @@
  *  - Adaptive HLS Master Playlist (.m3u8) streaming with up to 22 multi-audio tracks.
  *  - Complete WebVTT subtitle extraction across over 30 languages.
  *  - Paginated episode discovery supporting arbitrary season and episode depths (>10 episodes).
- *  - Fully compatible with Android QuickJS runtime (no Buffer, no AbortSignal.timeout).
+ *  - Fully compatible with Android QuickJS runtime (pure ES2020 globals, safe Promise.race timeout).
  *  - Formatted strictly for MatchScorer.kt (+0.25 SxxExx episode bonus for TV, clean (Year) for movies).
  */
 

@@ -64,11 +64,33 @@ function getLanguageInfo(code) {
     };
 }
 
+async function fetchWithTimeout(url, options, timeoutMs) {
+    timeoutMs = timeoutMs || 5000;
+    var timer;
+    var timeoutPromise = new Promise(function(_, reject) {
+        timer = setTimeout(function() {
+            reject(new Error('Request timeout (' + timeoutMs + 'ms)'));
+        }, timeoutMs);
+    });
+
+    try {
+        var res = await Promise.race([
+            fetch(url, options),
+            timeoutPromise
+        ]);
+        clearTimeout(timer);
+        return res;
+    } catch (err) {
+        clearTimeout(timer);
+        throw err;
+    }
+}
+
 /**
  * Resolves TMDB metadata dynamically in real-time.
  */
-async function resolveMetadata(tmdbId, mediaType) {
-    const extraArgs = (typeof globalThis !== 'undefined' && globalThis.__CALL_ARGS__) || {};
+async function resolveMetadata(tmdbId, mediaType, extraArgs) {
+    extraArgs = extraArgs || {};
     let title = extraArgs.title || extraArgs.name || '';
     let year = extraArgs.year || (extraArgs.releaseDate ? extraArgs.releaseDate.substring(0, 4) : '');
     let imdbId = extraArgs.imdbId || '';
@@ -78,10 +100,9 @@ async function resolveMetadata(tmdbId, mediaType) {
     if (!title || !year || !origLang) {
         try {
             const tmdbType = mediaType === 'movie' ? 'movie' : 'tv';
-            const metaRes = await fetch(TMDB_PROXY_URL + '/' + tmdbType + '/' + tmdbId, {
-                headers: DEFAULT_HEADERS,
-                signal: typeof AbortSignal !== 'undefined' && AbortSignal.timeout ? AbortSignal.timeout(6000) : undefined
-            });
+            const metaRes = await fetchWithTimeout(TMDB_PROXY_URL + '/' + tmdbType + '/' + tmdbId, {
+                headers: DEFAULT_HEADERS
+            }, 5000);
             if (metaRes.ok) {
                 const meta = await metaRes.json();
                 title = title || meta.title || meta.name || '';
@@ -129,13 +150,10 @@ async function queryVidbolt(tmdbId, mediaType, season, episode, meta, timeoutMs)
     const seenUrls = new Set();
 
     const serverPromises = vidboltServers.map(async (srv) => {
-        const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
-        const timer = controller ? setTimeout(() => controller.abort(), timeoutMs || 8000) : null;
         try {
-            const res = await fetch('https://vidbolt.xyz/api/resolve?' + queryPath + '&only=' + srv, {
-                headers,
-                signal: controller ? controller.signal : undefined
-            });
+            const res = await fetchWithTimeout('https://vidbolt.xyz/api/resolve?' + queryPath + '&only=' + srv, {
+                headers
+            }, timeoutMs || 4000);
 
             if (res.ok) {
                 const data = await res.json();
@@ -202,8 +220,6 @@ async function queryVidbolt(tmdbId, mediaType, season, episode, meta, timeoutMs)
             }
         } catch (err) {
             // ignore server error
-        } finally {
-            if (timer) clearTimeout(timer);
         }
     });
 
@@ -217,8 +233,6 @@ async function queryVidbolt(tmdbId, mediaType, season, episode, meta, timeoutMs)
 async function queryPunkflix(tmdbId, mediaType, season, episode, meta, timeoutMs) {
     const streams = [];
     const subtitles = [];
-    const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
-    const timer = controller ? setTimeout(() => controller.abort(), timeoutMs || 8000) : null;
 
     try {
         const headers = {
@@ -229,16 +243,11 @@ async function queryPunkflix(tmdbId, mediaType, season, episode, meta, timeoutMs
         let url;
         if (mediaType === 'movie') {
             url = 'https://punkflix.net/movie/' + tmdbId + '.json';
-        } else if (mediaType === 'tv') {
-            url = 'https://punkflix.net/tv/' + tmdbId + '/' + (season || 1) + '/' + (episode || 1) + '.json';
         } else {
-            url = 'https://punkflix.net/anime/' + tmdbId + '/' + (episode || 1) + '.json';
+            url = 'https://punkflix.net/tv/' + tmdbId + '/' + (season || 1) + '/' + (episode || 1) + '.json';
         }
 
-        const res = await fetch(url, {
-            headers,
-            signal: controller ? controller.signal : undefined
-        });
+        const res = await fetchWithTimeout(url, { headers }, timeoutMs || 4000);
 
         if (res.ok) {
             const data = await res.json();
@@ -329,8 +338,6 @@ async function queryPunkflix(tmdbId, mediaType, season, episode, meta, timeoutMs
         if (err.name !== 'AbortError') {
             console.log('[Bingr] Punkflix query error: ' + err.message);
         }
-    } finally {
-        if (timer) clearTimeout(timer);
     }
 
     return { streams, subtitles };
@@ -342,8 +349,6 @@ async function queryPunkflix(tmdbId, mediaType, season, episode, meta, timeoutMs
 async function queryFlikhub(tmdbId, mediaType, season, episode, meta, timeoutMs) {
     const streams = [];
     const subtitles = [];
-    const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
-    const timer = controller ? setTimeout(() => controller.abort(), timeoutMs || 8000) : null;
 
     try {
         const headers = {
@@ -358,10 +363,7 @@ async function queryFlikhub(tmdbId, mediaType, season, episode, meta, timeoutMs)
             url = 'https://proxy1.flikhub.net/tv?id=' + tmdbId + '&season=' + (season || 1) + '&episode=' + (episode || 1) + '&mode=json&sources=berlin&hevc=1';
         }
 
-        const res = await fetch(url, {
-            headers,
-            signal: controller ? controller.signal : undefined
-        });
+        const res = await fetchWithTimeout(url, { headers }, timeoutMs || 4000);
 
         if (res.ok) {
             const data = await res.json();
@@ -406,8 +408,6 @@ async function queryFlikhub(tmdbId, mediaType, season, episode, meta, timeoutMs)
         if (err.name !== 'AbortError') {
             console.log('[Bingr] Flikhub query error: ' + err.message);
         }
-    } finally {
-        if (timer) clearTimeout(timer);
     }
 
     return { streams, subtitles };
@@ -419,8 +419,6 @@ async function queryFlikhub(tmdbId, mediaType, season, episode, meta, timeoutMs)
 async function queryFilmu(tmdbId, mediaType, season, episode, meta, timeoutMs) {
     const streams = [];
     const subtitles = [];
-    const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
-    const timer = controller ? setTimeout(() => controller.abort(), timeoutMs || 8000) : null;
 
     try {
         const headers = {
@@ -435,10 +433,7 @@ async function queryFilmu(tmdbId, mediaType, season, episode, meta, timeoutMs) {
             url = 'https://embed.filmu.in/api/singularity-tv?tmdb=' + encodeURIComponent(tmdbId) + '&s=' + (season || 1) + '&e=' + (episode || 1);
         }
 
-        const res = await fetch(url, {
-            headers,
-            signal: controller ? controller.signal : undefined
-        });
+        const res = await fetchWithTimeout(url, { headers }, timeoutMs || 4000);
 
         if (res.ok) {
             const data = await res.json();
@@ -490,8 +485,6 @@ async function queryFilmu(tmdbId, mediaType, season, episode, meta, timeoutMs) {
         if (err.name !== 'AbortError') {
             console.log('[Bingr] Filmu query error: ' + err.message);
         }
-    } finally {
-        if (timer) clearTimeout(timer);
     }
 
     return { streams, subtitles };
@@ -504,9 +497,13 @@ async function queryFilmu(tmdbId, mediaType, season, episode, meta, timeoutMs) {
  * @param {string} mediaType - 'movie', 'tv', or 'anime'
  * @param {number} [season] - Season number for episodic content
  * @param {number} [episode] - Episode number for episodic content
+ * @param {Object} [extraArgs] - Extra parameters (title, year, etc.)
  * @returns {Promise<Array<Object>>}
  */
-async function getStreams(tmdbId, mediaType, season, episode) {
+async function getStreams(tmdbId, mediaType, season, episode, extraArgs) {
+    var callArgs = (typeof globalThis !== 'undefined' && globalThis.__CALL_ARGS__) || {};
+    extraArgs = Object.assign({}, callArgs, extraArgs || {});
+
     console.log('[Bingr] Fetching streams for ' + mediaType + ' ID: ' + tmdbId + ' (S:' + season + ' E:' + episode + ')');
 
     if (!tmdbId) {
@@ -515,15 +512,15 @@ async function getStreams(tmdbId, mediaType, season, episode) {
     }
 
     try {
-        const meta = await resolveMetadata(tmdbId, mediaType);
+        const meta = await resolveMetadata(tmdbId, mediaType, extraArgs);
         console.log('[Bingr] Resolved metadata: "' + meta.title + '" (' + meta.year + '), Original Language: ' + meta.originalLanguage);
 
-        // Query providers in parallel with 8s individual timeout
+        // Query providers in parallel with 4s individual timeout
         const queryPromises = [
-            queryVidbolt(tmdbId, mediaType, season, episode, meta, 8000),
-            queryPunkflix(tmdbId, mediaType, season, episode, meta, 8000),
-            queryFlikhub(tmdbId, mediaType, season, episode, meta, 8000),
-            queryFilmu(tmdbId, mediaType, season, episode, meta, 8000)
+            queryVidbolt(tmdbId, mediaType, season, episode, meta, 4000),
+            queryPunkflix(tmdbId, mediaType, season, episode, meta, 4000),
+            queryFlikhub(tmdbId, mediaType, season, episode, meta, 4000),
+            queryFilmu(tmdbId, mediaType, season, episode, meta, 4000)
         ];
 
         const queryResults = await Promise.allSettled(queryPromises);

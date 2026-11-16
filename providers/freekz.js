@@ -71,10 +71,8 @@ function pureMd5(str) {
     if (typeof CryptoJS !== 'undefined' && CryptoJS.MD5) {
         return CryptoJS.MD5(str).toString();
     }
-    if (typeof require !== 'undefined') {
-        try {
-            return require('crypto').createHash('md5').update(str).digest('hex');
-        } catch (_) {}
+    if (typeof globalThis !== 'undefined' && globalThis.CryptoJS && globalThis.CryptoJS.MD5) {
+        return globalThis.CryptoJS.MD5(str).toString();
     }
     function md5cycle(x, k) {
         var a = x[0], b = x[1], c = x[2], d = x[3];
@@ -588,15 +586,13 @@ function decryptLink(cipherText) {
     if (trimmed.indexOf('http://') === 0 || trimmed.indexOf('https://') === 0 || trimmed.indexOf('/') === 0) {
         return trimmed;
     }
-    // 1. Android QuickJS host runtime CryptoJS (supports global and require('crypto-js'))
+    // Android QuickJS host runtime CryptoJS or global CryptoJS
     try {
         var cryptoObj = null;
         if (typeof CryptoJS !== 'undefined' && CryptoJS.AES) {
             cryptoObj = CryptoJS;
         } else if (typeof globalThis !== 'undefined' && globalThis.CryptoJS && globalThis.CryptoJS.AES) {
             cryptoObj = globalThis.CryptoJS;
-        } else if (typeof require !== 'undefined') {
-            try { cryptoObj = require('crypto-js'); } catch (_) {}
         }
 
         if (cryptoObj && cryptoObj.AES && cryptoObj.enc && cryptoObj.enc.Utf8) {
@@ -604,41 +600,6 @@ function decryptLink(cipherText) {
             var utf8Str = decrypted.toString(cryptoObj.enc.Utf8);
             if (utf8Str && (utf8Str.indexOf('http://') === 0 || utf8Str.indexOf('https://') === 0 || utf8Str.indexOf('/') === 0)) {
                 return utf8Str;
-            }
-        }
-    } catch (_) {}
-
-    // 2. Node.js environment fallback using built-in 'crypto'
-    try {
-        if (typeof require !== 'undefined') {
-            var nodeCrypto = null;
-            try { nodeCrypto = require('crypto'); } catch (_) {}
-            if (nodeCrypto && typeof nodeCrypto.createDecipheriv === 'function') {
-                var raw = Buffer.from(trimmed, 'base64');
-                if (raw.subarray(0, 8).toString('utf8') === 'Salted__') {
-                    var salt = raw.subarray(8, 16);
-                    var ciphertext = raw.subarray(16);
-                    var d = Buffer.alloc(0);
-                    var dI = Buffer.alloc(0);
-                    var passBuf = Buffer.from(AES_PASSPHRASE, 'utf8');
-                    while (d.length < 48) {
-                        var h = nodeCrypto.createHash('md5');
-                        h.update(dI);
-                        h.update(passBuf);
-                        h.update(salt);
-                        dI = h.digest();
-                        d = Buffer.concat([d, dI]);
-                    }
-                    var key = d.subarray(0, 32);
-                    var iv = d.subarray(32, 48);
-                    var decipher = nodeCrypto.createDecipheriv('aes-256-cbc', key, iv);
-                    var dec = decipher.update(ciphertext);
-                    dec = Buffer.concat([dec, decipher.final()]);
-                    var resStr = dec.toString('utf8');
-                    if (resStr && (resStr.indexOf('http://') === 0 || resStr.indexOf('https://') === 0 || resStr.indexOf('/') === 0)) {
-                        return resStr;
-                    }
-                }
             }
         }
     } catch (_) {}

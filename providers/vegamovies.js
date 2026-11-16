@@ -22,12 +22,12 @@
 /* =========================================================================
    CONFIG BLOCK: If site changes domain, update ONLY the URLs in this block.
    ========================================================================= */
-var BASE_URL = 'https://vegamovies10.co.in';
+var BASE_URL = 'https://vegamovies14.co.in';
 var BACKUP_URLS = [
+    'https://vegamovies14.co.in',
     'https://vegamovies10.co.in',
-    'https://vegamoviess.army',
-    'https://vegamoviess.actor',
-    'https://veqamovies.io'
+    'https://veqamovies.mobi',
+    'https://vegamoviess.army'
 ];
 var DYNAMIC_URLS_ENDPOINT = 'https://raw.githubusercontent.com/SaurabhKaperwan/Utils/refs/heads/main/urls.json';
 var FASTDL_BASE = 'https://fast-dl.one';
@@ -847,11 +847,36 @@ function stripReleaseMetadata(t) {
             } else if (/complete|series/i.test(candTitle)) {
                 score += 30;
             }
+
+            if (meta.year) {
+                var metaY = parseInt(meta.year, 10);
+                var candYearMatches = candTitle.match(/\b(19\d\d|20\d\d)\b/g);
+                if (candYearMatches && candYearMatches.length > 0) {
+                    var expectedMaxY = (sNum === 1) ? metaY + 2 : metaY + sNum * 2 + 1;
+                    var hasMatchingYear = candYearMatches.some(function(yStr) {
+                        var y = parseInt(yStr, 10);
+                        return y >= metaY - 1 && y <= expectedMaxY;
+                    });
+                    if (hasMatchingYear) {
+                        score += 40;
+                    } else {
+                        score -= 80;
+                    }
+                }
+            }
         }
 
-        var spinoffRegex = /\b(?:the\s+challenge|in\s+conversation|making\s+of|behind\s+the\s+scenes|trailer|recap|explained|special)\b/i;
+        if (targetWords.length === 1) {
+            var targetWord = targetWords[0];
+            var candWords = candClean.split(' ');
+            if (candWords.indexOf(targetWord) > 0) {
+                score -= 50;
+            }
+        }
+
+        var spinoffRegex = /\b(?:the\s+challenge|in\s+conversation|making\s+of|behind\s+the\s+scenes|theatrical\s*preview|preview|trailer|teaser|recap|explained|special)\b/i;
         if (spinoffRegex.test(candTitle) && !spinoffRegex.test(meta.title || '')) {
-            score -= 120;
+            score -= 150;
         }
 
         if (score >= 40) {
@@ -891,7 +916,7 @@ function stripReleaseMetadata(t) {
     var seenStreamKeys = {};
 
     // Extract all Nexdrive, Fast-DL, Hubcloud, and VGMLinks download links
-    var aRegex = /<a[^>]+href="([^"]*(?:nexdrive|vcloud|fast-dl|vgmlinks)[^"]+)"[^>]*>([\s\S]*?)<\/a>/gi;
+    var aRegex = /<a[^>]+href="([^"]*(?:nexdrive|v-?cloud|fast-dl|hubcloud|vgmlinks)[^"]+)"[^>]*>([\s\S]*?)<\/a>/gi;
     var m;
     while ((m = aRegex.exec(postHtml)) !== null) {
         var href = m[1].replace(/&amp;/g, '&');
@@ -957,7 +982,7 @@ function stripReleaseMetadata(t) {
                     })
                 );
             })(href, linkQuality);
-        } else if (href.indexOf('vcloud') >= 0 || href.indexOf('hubcloud') >= 0) {
+        } else if (href.indexOf('vcloud') >= 0 || href.indexOf('v-cloud') >= 0 || href.indexOf('hubcloud') >= 0) {
             (function(hubUrl, quality) {
                 streamPromises.push(
                     resolveHubCloud(hubUrl).then(function(servers) {

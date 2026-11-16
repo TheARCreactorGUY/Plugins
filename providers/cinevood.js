@@ -22,13 +22,12 @@
 /* =========================================================================
    CONFIG BLOCK: If site changes domain, update ONLY the URLs in this block.
    ========================================================================= */
-var BASE_URL = 'https://one.1cinevood.beer';
+var BASE_URL = 'https://one.1cinevood.baby';
 var BACKUP_URLS = [
-    'https://one.1cinevood.beer',
+    'https://one.1cinevood.baby',
     'https://cinevood.coupons',
-    'https://cinevood.garden',
-    'https://cinevood.hair',
-    'https://1cinevood.fyi'
+    'https://one.1cinevood.beer',
+    'https://cinevood.hair'
 ];
 var OXXFILE_BASE = 'https://new10.oxxfile.info';
 var OXXFILE_BACKUPS = [
@@ -217,6 +216,59 @@ async function resolveMetadata(tmdbId, mediaType, extraArgs) {
 }
 
 /**
+ * Dynamically probes candidate stream to ensure ExoPlayer playability (HTTP 200/206).
+ * Filters out 403, 404, 5xx, cyberlocker challenge pages, and HTML/JSON gates.
+ */
+async function analyzeCloudStreamHealth(streamUrl) {
+    if (!streamUrl || typeof streamUrl !== 'string' || !/^https?:\/\//i.test(streamUrl)) return false;
+    if (/\.zip(?:$|\?)/i.test(streamUrl)) return false;
+    if (/validate|multiup|cflare/i.test(streamUrl)) return false;
+    try {
+        var isWorkersDev = streamUrl.indexOf('workers.dev') >= 0;
+        var reqHeaders = { 'User-Agent': DEFAULT_HEADERS['User-Agent'] };
+        if (!isWorkersDev) {
+            reqHeaders['Range'] = 'bytes=0-0';
+        }
+        var probeRes = await safeFetch(streamUrl, {
+            method: isWorkersDev ? 'HEAD' : 'GET',
+            headers: reqHeaders,
+            redirect: 'follow'
+        }, 4000);
+
+        if (isWorkersDev && (probeRes.status === 405 || probeRes.status === 501)) {
+            probeRes = await safeFetch(streamUrl, {
+                method: 'GET',
+                headers: {
+                    'User-Agent': DEFAULT_HEADERS['User-Agent'],
+                    'Range': 'bytes=0-0'
+                },
+                redirect: 'follow'
+            }, 4000);
+        }
+
+        if (probeRes.status === 403 || probeRes.status === 404 || probeRes.status === 410 ||
+            (probeRes.status >= 500 && probeRes.status <= 599)) {
+            return false;
+        }
+
+        var cType = (probeRes.headers && (probeRes.headers.get('content-type') || probeRes.headers.get('Content-Type'))) || '';
+        var lowerCt = cType.toLowerCase();
+        if (lowerCt.indexOf('application/zip') >= 0 || lowerCt.indexOf('application/x-zip') >= 0 ||
+            lowerCt.indexOf('application/x-rar') >= 0) {
+            return false;
+        }
+        if ((lowerCt.indexOf('text/') >= 0 || lowerCt.indexOf('application/json') >= 0) &&
+            (probeRes.status === 200 || probeRes.status === 206)) {
+            return false;
+        }
+        return true;
+    } catch (_) {
+        if (streamUrl.indexOf('workers.dev') >= 0) return false;
+        return true;
+    }
+}
+
+/**
  * Direct Google User Content CDN link extractor.
  */
 async function resolvePixelCloud(pixelUrl) {
@@ -386,13 +438,15 @@ async function resolveHubCloud(hubUrl) {
                     headers: { 'User-Agent': DEFAULT_HEADERS['User-Agent'] }
                 });
             } else if (label.indexOf('ZipDisk') >= 0 || href.indexOf('workers.dev') >= 0) {
-                servers.push({
-                    serverName: 'ZipDisk',
-                    displayName: 'ZipDisk Server',
-                    url: href,
-                    priority: 3,
-                    headers: { 'User-Agent': DEFAULT_HEADERS['User-Agent'] }
-                });
+                if (href.indexOf('validate') === -1 && href.indexOf('multiup') === -1 && href.indexOf('cflare') === -1 && !/\.zip(?:$|\?)/i.test(href)) {
+                    servers.push({
+                        serverName: 'ZipDisk',
+                        displayName: 'ZipDisk Server',
+                        url: href,
+                        priority: 3,
+                        headers: { 'User-Agent': DEFAULT_HEADERS['User-Agent'] }
+                    });
+                }
             } else if (label.indexOf('10Gbps') >= 0 || href.indexOf('pixel.hubcloud.ist') >= 0 || href.indexOf('gpdl.hubcloud.ist') >= 0) {
                 (function(h) {
                     asyncTasks.push(resolvePixelCloud(h).then(function(directPixel) {
@@ -597,7 +651,10 @@ async function resolveMobileJsr(jsrUrl, isMovie, seasonNum, episodeNum) {
             if (encMatch) {
                 try {
                     var rawB64 = encMatch[1].replace(/\\/g, '');
-                    var decodedHtml = typeof atob === 'function' ? atob(rawB64) : Buffer.from(rawB64, 'base64').toString('utf8');
+                    var decodedHtml = '';
+                    if (typeof atob === 'function') {
+                        try { decodedHtml = atob(rawB64); } catch (_) {}
+                    }
                     if (decodedHtml && decodedHtml.length > 20) {
                         pageHtml += '\n' + decodedHtml;
                     }
@@ -993,19 +1050,10 @@ async function searchCinevood(query) {
         if (!res.ok) return null;
 
         var html = await res.text();
-        var articles = html.match(/<article[\s\S]*?<\/article>/gi) || [];
-
-        // Follow mirror hub landing pages (e.g. cinevood.coupons linking to one.1cinevood.beer)
-        if (articles.length === 0) {
-            var mirrorMatch = html.match(/href="(https?:\/\/[^"]*(?:1cinevood|cinevood)[^"]*)"/i);
-            if (mirrorMatch && mirrorMatch[1]) {
-                var originM = mirrorMatch[1].match(/^(https?:\/\/[^\/]+)/i);
-                if (originM && !seenBases[originM[1]]) {
-                    return await fetchSearchOnBase(originM[1]);
-                }
-            }
-            return null;
-        }
+        var rawArticles = html.match(/<article[\s\S]*?<\/article>/gi) || [];
+        var articles = rawArticles.filter(function(a) {
+            return a.indexOf('mwb-2col') === -1;
+        });
 
         var results = [];
         for (var i = 0; i < articles.length; i++) {
@@ -1022,7 +1070,20 @@ async function searchCinevood(query) {
             }
         }
 
-        return hasRelevantCinevoodResult(results, query) ? results : null;
+        if (hasRelevantCinevoodResult(results, query)) {
+            return results;
+        }
+
+        // Follow mirror hub landing pages (e.g. cinevood.coupons linking to one.1cinevood.baby)
+        var mirrorMatch = html.match(/href="(https?:\/\/[^"]*(?:1cinevood|cinevood)[^"]*)"/i);
+        if (mirrorMatch && mirrorMatch[1]) {
+            var originM = mirrorMatch[1].match(/^(https?:\/\/[^\/]+)/i);
+            if (originM && !seenBases[originM[1]]) {
+                return await fetchSearchOnBase(originM[1]);
+            }
+        }
+
+        return null;
     }
 
     for (var b = 0; b < searchBases.length; b++) {
@@ -1384,8 +1445,29 @@ async function getStreams(tmdbId, mediaType, season, episode, extraArgs) {
         }
     }
 
-    console.log('[Cinevood] Discovered ' + finalStreams.length + ' direct stream(s)');
-    return finalStreams;
+    var healthyStreams = [];
+    var healthChecks = [];
+    for (var fs = 0; fs < finalStreams.length; fs++) {
+        (function(stItem) {
+            healthChecks.push(
+                analyzeCloudStreamHealth(stItem.url).then(function(isHealthy) {
+                    if (isHealthy) {
+                        healthyStreams.push(stItem);
+                    }
+                }).catch(function() {
+                    if (stItem.url.indexOf('workers.dev') === -1) {
+                        healthyStreams.push(stItem);
+                    }
+                })
+            );
+        })(finalStreams[fs]);
+    }
+    if (healthChecks.length > 0) {
+        await Promise.all(healthChecks);
+    }
+
+    console.log('[Cinevood] Discovered ' + healthyStreams.length + ' direct stream(s)');
+    return healthyStreams;
 }
 
 if (typeof module !== 'undefined' && module.exports) {
