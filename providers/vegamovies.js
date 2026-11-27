@@ -1,40 +1,28 @@
 /**
  * Vegamovies Provider Plugin for Euthopiar / Universal Streaming Architecture
  *
- * Dedicated provider for Vegamovies (https://veqamovies.mobi / https://vegamovies.pages.dev)
- * Supports Bollywood, Hollywood, South Indian Dubbed, Korean/Asian Drama, and Web Series.
- *
- * High-Speed Direct CDN Streaming Engines:
- *  - Vegamovies | 10Gbps Google CDN (video-downloads.googleusercontent.com)
- *  - Vegamovies | FSL R2 Server (Direct Cloudflare R2 Presigned S3)
- *  - Vegamovies | Pixeldrain Server (High-Speed Direct Stream)
- *  - Vegamovies | ZipDisk Server (Cloudflare Edge Direct Stream)
- *
- * Features:
- *  - Zero-bot-block direct Fast-DL & Nexdrive extraction engine.
- *  - Direct 10Gbps Google Cloud CDN streams with HTTP 206 Partial Content range support.
- *  - Full TV Series season & episode targeting (SxxExx).
- *  - Dynamic multi-audio & subtitle track extraction ([MULTI] [HIN · ENG], [HIN], etc.).
- *  - Browser.resolve fallback for protected pages.
- *  - Strict compliance with MatchScorer.kt and Euthopiar DownloadEngine.
+ * High-speed direct CDN provider for Bollywood, Hollywood, South Indian Dubbed,
+ * and Web Series via Fast-DL Google Cloud CDN, HubCloud (FSL R2, Pixeldrain,
+ * ZipDisk, 10Gbps Pixel Cloud), with rich technical metadata and VTT subtitles.
  */
 
 /* =========================================================================
    CONFIG BLOCK: If site changes domain, update ONLY the URLs in this block.
    ========================================================================= */
-var BASE_URL = 'https://vegamovies14.co.in';
+var BASE_URL = 'https://vegamovies19.co.in';
 var BACKUP_URLS = [
-    'https://vegamovies14.co.in',
-    'https://vegamovies10.co.in',
-    'https://veqamovies.mobi',
-    'https://vegamoviess.army'
+    'https://vegamovies19.co.in',
+    'https://1vegamovies.shop',
+    'https://veqamovies.mobi'
 ];
 var DYNAMIC_URLS_ENDPOINT = 'https://raw.githubusercontent.com/SaurabhKaperwan/Utils/refs/heads/main/urls.json';
 var FASTDL_BASE = 'https://fast-dl.one';
+var GAMERXYT_REFERER = 'https://gamerxyt.com/';
+var SUB_VDRK_URL = 'https://sub.vdrk.site/v2';
 var TMDB_PROXY_URL = 'https://db.wecollege.net/3';
 /* ========================================================================= */
 
-var USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36';
+var USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
 
 var DEFAULT_HEADERS = {
     'User-Agent': USER_AGENT,
@@ -42,8 +30,10 @@ var DEFAULT_HEADERS = {
     'Referer': BASE_URL + '/'
 };
 
+var DEFUNCT_OR_AD_REGEX = /busycdn|rtmark|redirect|advert|ad\.|shortlink|clk|icy-king-205d|download\.goldmines|goldmines\.server-|cdn\.faceboook\.workers\.dev/i;
+
 function safeFetch(url, options, timeoutMs) {
-    timeoutMs = timeoutMs || 10000;
+    timeoutMs = timeoutMs || 3000;
     var timer;
     var timeoutPromise = new Promise(function(_, reject) {
         timer = setTimeout(function() {
@@ -73,55 +63,97 @@ function cleanTitle(t) {
     return String(t || '').toLowerCase().replace(/[^a-z0-9]/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
+function stripReleaseMetadata(t) {
+    return String(t || '')
+        .replace(/\[[^\]]*\]/g, ' ')
+        .replace(/\([^\)]*\)/g, ' ')
+        .replace(/\b(?:480p|720p|1080p|2160p|4k|uhd|fhd|hd|sd|dual\s*audio|multi\s*audio|bluray|web-?dl|webrip|hdrip|esub|x264|x265|hevc|season\s*\d+|s\d+)\b[\s\S]*/i, '');
+}
+
 function parseQualityFromText(text) {
     if (!text) return null;
     var t = String(text);
-    // Explicit resolutions first
-    if (/\b(2160p|4k\b|uhd\b)/i.test(t)) return '4K 2160p';
-    if (/\b(1080[pi]\b|fhd\b)/i.test(t)) return '1080p';
-    if (/\b(720p\b)/i.test(t)) return '720p';
-    if (/\b(480p\b|540p\b|360p\b)/i.test(t)) return '480p';
-    // Fallback general tags only if no explicit noise
-    if (/\b(hd)\b/i.test(t) && !/hdrip|webrip|hdts|hdtc/i.test(t)) return '720p';
-    if (/\b(sd)\b/i.test(t)) return '480p';
+    if (/\b2160p\b/i.test(t)) return '4K 2160p';
+    if (/\b(?:1080[pi]|fhd)\b/i.test(t)) return '1080p';
+    if (/\b720p\b/i.test(t)) return '720p';
+    if (/\b(?:480p|540p|360p)\b/i.test(t)) return '480p';
+    var clean = t.replace(/\bds-?4k\b/gi, '').replace(/4k[- ]?remaster(?:ed)?/gi, '');
+    if (/\b(?:4k|uhd)\b/i.test(clean)) return '4K 2160p';
+    if (/\b(hd)\b/i.test(clean) && !/hdrip|webrip|hdts|hdtc/i.test(clean)) return '720p';
+    if (/\b(sd)\b/i.test(clean)) return '480p';
     return null;
 }
 
 function extractQualityFromContext(html, linkIndex, label) {
-    // 1. Direct label check (if button explicitly specifies quality)
     var q = parseQualityFromText(label);
     if (q) return q;
 
-    // 2. Preceding HTML context (check nearest resolution tag in previous 1500 characters)
     var sliceBefore = html.substring(Math.max(0, linkIndex - 1500), linkIndex);
     var cleanSlice = sliceBefore.replace(/hdrip|webrip|bluray|hdts|hdtc/gi, ' ');
     var matches = [];
-    var qRegex = /\b(2160p|4k\b|uhd\b|1080[pi]\b|fhd\b|720p\b|540p\b|480p\b|360p\b)/gi;
+    var qRegex = /\b(2160p|1080[pi]\b|fhd\b|720p\b|540p\b|480p\b|360p\b|4k\b|uhd\b)/gi;
     var qm;
-    while ((qm = qRegex.exec(cleanSlice)) !== null) {
-        matches.push(qm[1]);
-    }
+    while ((qm = qRegex.exec(cleanSlice)) !== null) matches.push(qm[1]);
     if (matches.length > 0) {
-        var lastMatch = matches[matches.length - 1];
-        var found = parseQualityFromText(lastMatch);
+        var found = parseQualityFromText(matches[matches.length - 1]);
         if (found) return found;
     }
 
-    // 3. Fallback to general tags in cleanSlice
     var generalMatch = cleanSlice.match(/\b(hd|sd)\b/i);
     if (generalMatch) {
         var gFound = parseQualityFromText(generalMatch[1]);
         if (gFound) return gFound;
     }
-
     return '1080p';
+}
+
+function extractMediaTags(text) {
+    var upper = String(text || '').toUpperCase();
+    var sourceType = null;
+    if (/\bREMUX\b/.test(upper)) sourceType = 'REMUX';
+    else if (/\bBLU-?RAY\b|\bBDRIP\b/.test(upper)) sourceType = 'BluRay';
+    else if (/\bWEB-?DL\b/.test(upper)) sourceType = 'WEB-DL';
+    else if (/\bWEBRIP\b/.test(upper)) sourceType = 'WEBRip';
+    else if (/\bHDRIP\b/.test(upper)) sourceType = 'HDRip';
+
+    var hdrType = null;
+    if (/DOLBY\s*VISION|\bDOVI\b|\bDV\b/.test(upper)) hdrType = 'DV';
+    else if (/HDR10\+|HDR10PLUS/.test(upper)) hdrType = 'HDR10+';
+    else if (/HDR10/.test(upper)) hdrType = 'HDR10';
+    else if (/\bHLG\b/.test(upper)) hdrType = 'HLG';
+    else if (/\bHDR\b/.test(upper)) hdrType = 'HDR';
+
+    var codec = null;
+    if (/\bAV1\b/.test(upper)) codec = 'AV1';
+    else if (/\b(?:HEVC|H\.?265|X265)\b/.test(upper)) codec = 'HEVC';
+    else if (/\b(?:AVC|H\.?264|X264)\b/.test(upper)) codec = 'AVC';
+    else if (/\bVP9\b/.test(upper)) codec = 'VP9';
+
+    var bitDepth = /\b10[- ]?BIT\b/.test(upper) ? '10bit' : null;
+
+    var audioFormat = null;
+    var hasAtmos = /\bATMOS\b/.test(upper);
+    var has71 = /\b7\.1\b/.test(upper);
+    var has51 = /\b5\.1\b/.test(upper);
+    if (hasAtmos) audioFormat = has71 ? 'Dolby Atmos 7.1' : (has51 ? 'Dolby Atmos 5.1' : 'Dolby Atmos');
+    else if (/\bTRUE-?HD\b/.test(upper)) audioFormat = has71 ? 'TrueHD 7.1' : 'TrueHD';
+    else if (/\b(?:DDP|DD\+|EAC3|E-AC-3)\b/.test(upper)) audioFormat = has51 ? 'DDP 5.1' : 'DDP';
+    else if (/\bDTS-?HD\b/.test(upper)) audioFormat = 'DTS-HD';
+    else if (/\bDTS\b/.test(upper)) audioFormat = has51 ? 'DTS 5.1' : 'DTS';
+
+    var tags = [];
+    if (sourceType) tags.push(sourceType);
+    if (hdrType) tags.push(hdrType);
+    if (codec) tags.push(codec);
+    if (bitDepth) tags.push(bitDepth);
+    if (audioFormat) tags.push(audioFormat);
+    return { sourceType: sourceType, hdrType: hdrType, codec: codec, bitDepth: bitDepth, audioFormat: audioFormat, tags: tags };
 }
 
 function parseAudiosFromText(text) {
     if (!text) return { isMulti: false, primary: 'Hindi', tag: 'HIN', badge: '[HIN]' };
     var upper = String(text).toUpperCase();
     var langs = [];
-
     var isMultiCue = /\b(MULTI|DUAL|MULTI-AUDIO|DUAL-AUDIO)\b/i.test(upper) ||
                      (/\b(HINDI|HIN)\b/i.test(upper) && /\b(ENGLISH|ENG)\b/i.test(upper));
 
@@ -138,7 +170,6 @@ function parseAudiosFromText(text) {
     if (/\b(SPANISH|SPA)\b/i.test(upper)) langs.push('SPA');
     if (/\b(FRENCH|FRA)\b/i.test(upper)) langs.push('FRA');
     if (/\b(GERMAN|GER)\b/i.test(upper)) langs.push('GER');
-    if (/\b(CHINESE|CHI)\b/i.test(upper)) langs.push('CHI');
 
     var distinct = [];
     for (var i = 0; i < langs.length; i++) {
@@ -147,35 +178,15 @@ function parseAudiosFromText(text) {
 
     if (isMultiCue || distinct.length > 1) {
         var langJoin = distinct.length > 0 ? distinct.join(' · ') : 'MULTI';
-        return {
-            isMulti: true,
-            primary: 'Multi',
-            tag: 'MULTI',
-            badge: '[MULTI] [' + langJoin + ']'
-        };
+        return { isMulti: true, primary: 'Multi', tag: 'MULTI', badge: '[MULTI] [' + langJoin + ']' };
     }
-
     if (distinct.length === 1) {
         var tag = distinct[0];
-        return {
-            isMulti: false,
-            primary: tag === 'HIN' ? 'Hindi' : (tag === 'ENG' ? 'English' : tag),
-            tag: tag,
-            badge: '[' + tag + ']'
-        };
+        return { isMulti: false, primary: tag === 'HIN' ? 'Hindi' : (tag === 'ENG' ? 'English' : tag), tag: tag, badge: '[' + tag + ']' };
     }
-
-    return {
-        isMulti: false,
-        primary: 'Hindi',
-        tag: 'HIN',
-        badge: '[HIN]'
-    };
+    return { isMulti: false, primary: 'Hindi', tag: 'HIN', badge: '[HIN]' };
 }
 
-/**
- * Resolve TMDB metadata dynamically.
- */
 async function resolveMetadata(tmdbId, mediaType, extraArgs) {
     var callArgs = (typeof globalThis !== 'undefined' && globalThis.__CALL_ARGS__) || {};
     extraArgs = Object.assign({}, callArgs, extraArgs || {});
@@ -186,9 +197,7 @@ async function resolveMetadata(tmdbId, mediaType, extraArgs) {
     if (!title && tmdbId) {
         try {
             var tmdbType = mediaType === 'movie' ? 'movie' : 'tv';
-            var res = await safeFetch(TMDB_PROXY_URL + '/' + tmdbType + '/' + tmdbId, {
-                headers: DEFAULT_HEADERS
-            }, 5000);
+            var res = await safeFetch(TMDB_PROXY_URL + '/' + tmdbType + '/' + tmdbId, { headers: DEFAULT_HEADERS }, 2500);
             if (res.ok) {
                 var meta = await res.json();
                 title = meta.title || meta.name || '';
@@ -206,75 +215,96 @@ async function resolveMetadata(tmdbId, mediaType, extraArgs) {
     };
 }
 
-/**
- * Direct Google User Content CDN link extractor.
- */
-async function resolvePixelCloud(pixelUrl) {
+async function analyzeCloudStreamHealth(streamUrl) {
+    if (!streamUrl || DEFUNCT_OR_AD_REGEX.test(streamUrl) || /\.zip(?:$|\?)/i.test(streamUrl)) return false;
     try {
-        var resp = await safeFetch(pixelUrl, {
-            headers: {
-                'User-Agent': DEFAULT_HEADERS['User-Agent'],
-                'Referer': 'https://gamerxyt.com/'
-            },
-            redirect: 'manual'
-        }, 6000);
-        var loc = resp.headers && (resp.headers.get('location') || resp.headers.get('Location'));
-        if (loc) {
-            if (loc.indexOf('?link=') >= 0) {
-                return decodeURIComponent(loc.split('?link=')[1]);
-            }
-            if (loc.indexOf('googleusercontent.com') >= 0 || /^https?:\/\//i.test(loc)) {
-                return loc;
-            }
+        var isWorkersDev = streamUrl.indexOf('workers.dev') >= 0;
+        var reqHeaders = { 'User-Agent': USER_AGENT };
+        if (!isWorkersDev) reqHeaders['Range'] = 'bytes=0-0';
+
+        var probeRes = await safeFetch(streamUrl, {
+            method: isWorkersDev ? 'HEAD' : 'GET',
+            headers: reqHeaders,
+            redirect: 'follow'
+        }, 2200);
+
+        if (isWorkersDev && (probeRes.status === 405 || probeRes.status === 501)) {
+            probeRes = await safeFetch(streamUrl, {
+                method: 'GET',
+                headers: { 'User-Agent': USER_AGENT, 'Range': 'bytes=0-0' },
+                redirect: 'follow'
+            }, 2200);
         }
-        var finalUrl = resp.url || '';
-        if (finalUrl.indexOf('?link=') >= 0) {
-            return decodeURIComponent(finalUrl.split('?link=')[1]);
+
+        if (probeRes.status === 403 || probeRes.status === 404 || probeRes.status === 410 ||
+            (probeRes.status >= 500 && probeRes.status <= 599)) {
+            return false;
         }
-        if (finalUrl.indexOf('video-downloads.googleusercontent.com') >= 0 || finalUrl.indexOf('googleusercontent.com') >= 0) {
-            return finalUrl;
+        var cType = (probeRes.headers && (probeRes.headers.get('content-type') || probeRes.headers.get('Content-Type'))) || '';
+        var lowerCt = cType.toLowerCase();
+        if ((lowerCt.indexOf('text/') >= 0 || lowerCt.indexOf('application/json') >= 0) &&
+            (probeRes.status === 200 || probeRes.status === 206)) {
+            return false;
         }
-        var cType = (resp.headers && resp.headers.get('content-type')) || '';
-        if (cType.toLowerCase().indexOf('text/html') >= 0) {
-            var text = await resp.text();
-            var m = text.match(/href=['"](https:\/\/video-downloads\.googleusercontent\.com\/[^'"]+)['"]/i) ||
-                    text.match(/href=['"](https:\/\/[^'"]*googleusercontent\.com\/[^'"]+)['"]/i);
-            if (m) return m[1];
-        }
-    } catch (_) {}
-    return pixelUrl;
+        return true;
+    } catch (_) {
+        return false;
+    }
 }
 
-/**
- * CDN resolver for HubCloud / gamerxyt.com gateway.
- */
+async function resolvePixelCloud(pixelUrl) {
+    var curUrl = pixelUrl;
+    var referer = GAMERXYT_REFERER;
+    try {
+        for (var hop = 0; hop < 3; hop++) {
+            var resp = await safeFetch(curUrl, {
+                headers: { 'User-Agent': USER_AGENT, 'Referer': referer },
+                redirect: 'manual'
+            }, 2500);
+            var loc = resp.headers && (resp.headers.get('location') || resp.headers.get('Location'));
+            if (!loc) {
+                var cType = (resp.headers && resp.headers.get('content-type')) || '';
+                if (cType.toLowerCase().indexOf('text/html') >= 0) {
+                    var text = await resp.text();
+                    var m = text.match(/href=['"](https:\/\/video-downloads\.googleusercontent\.com\/[^'"]+)['"]/i) ||
+                            text.match(/href=['"](https:\/\/[^'"]*googleusercontent\.com\/[^'"]+)['"]/i);
+                    if (m) return m[1];
+                }
+                break;
+            }
+            if (loc.indexOf('?link=') >= 0) {
+                var ext = decodeURIComponent(loc.split('?link=')[1]);
+                if (ext && ext.indexOf('googleusercontent.com') >= 0) return ext;
+                curUrl = ext;
+            } else {
+                curUrl = loc;
+            }
+            if (curUrl.indexOf('googleusercontent.com') >= 0) return curUrl;
+            referer = curUrl;
+        }
+    } catch (_) {}
+    return null;
+}
+
 async function resolveHubCloud(hubUrl) {
     try {
         var res = await safeFetch(hubUrl, {
-            headers: {
-                'User-Agent': DEFAULT_HEADERS['User-Agent'],
-                'Referer': BASE_URL + '/'
-            }
-        }, 8000);
+            headers: { 'User-Agent': USER_AGENT, 'Referer': BASE_URL + '/' }
+        }, 3000);
         var text = await res.text();
+        if (!text || /cf-turnstile|challenges\.cloudflare\.com/i.test(text)) return [];
 
-        // Follow nested drive redirects if any
         if (hubUrl.indexOf('hubdrive.') >= 0 || hubUrl.indexOf('/drive/') >= 0) {
             var driveMatch = text.match(/https:\/\/hubcloud\.[a-z0-9.]+\/drive\/[a-z0-9]+/i);
-            if (driveMatch && driveMatch[0] !== hubUrl) {
-                return resolveHubCloud(driveMatch[0]);
-            }
+            if (driveMatch && driveMatch[0] !== hubUrl) return resolveHubCloud(driveMatch[0]);
         }
 
         var gx = text.match(/https:\/\/gamerxyt\.com\/hubcloud\.php\?[^"'\s<>]+/);
         if (!gx) return [];
 
         var gRes = await safeFetch(gx[0], {
-            headers: {
-                'User-Agent': DEFAULT_HEADERS['User-Agent'],
-                'Referer': hubUrl
-            }
-        }, 8000);
+            headers: { 'User-Agent': USER_AGENT, 'Referer': hubUrl }
+        }, 3000);
         var gText = await gRes.text();
 
         var servers = [];
@@ -285,15 +315,15 @@ async function resolveHubCloud(hubUrl) {
                        gText.match(/var\s+pxl\s*=\s*['"](https?:\/\/[^'"]*pixeldrain[^'"]*)['"]/i);
         if (pxlMatch) {
             var rawPxl = pxlMatch[1];
-            var pxlDirect = rawPxl.replace(/\/u\/([a-zA-Z0-9_-]+)/, '/api/file/$1')
+            var pxlDirect = rawPxl.replace(/\/u\/([a-zA-Z0-9_-]+)/, '/api/file/$1?download')
                                   .replace('pixeldrain.dev', 'pixeldrain.com');
-            servers.push({
-                serverName: 'Pixeldrain',
-                displayName: 'Pixeldrain Server',
-                url: pxlDirect,
-                priority: 2,
-                headers: { 'User-Agent': DEFAULT_HEADERS['User-Agent'] }
-            });
+            if (!DEFUNCT_OR_AD_REGEX.test(pxlDirect)) {
+                (function(pUrl) {
+                    asyncTasks.push(analyzeCloudStreamHealth(pUrl).then(function(ok) {
+                        if (ok) servers.push({ serverName: 'Pixeldrain', displayName: 'Pixeldrain', url: pUrl, priority: 2, headers: { 'User-Agent': USER_AGENT } });
+                    }).catch(function() {}));
+                })(pxlDirect);
+            }
             seenUrls[rawPxl] = true;
             seenUrls[pxlDirect] = true;
         }
@@ -303,140 +333,70 @@ async function resolveHubCloud(hubUrl) {
         while ((match = aRegex.exec(gText)) !== null) {
             var href = match[1];
             var label = match[2].replace(/<[^>]+>/g, '').trim();
-            if (seenUrls[href]) continue;
+            if (seenUrls[href] || DEFUNCT_OR_AD_REGEX.test(href)) continue;
             seenUrls[href] = true;
 
-            if (label.indexOf('FSL Server') >= 0 || href.indexOf('r2.cloudflarestorage.com') >= 0) {
-                servers.push({
-                    serverName: 'FSL R2',
-                    displayName: 'FSL R2 Server',
-                    url: href,
-                    priority: 1,
-                    headers: { 'User-Agent': DEFAULT_HEADERS['User-Agent'] }
-                });
+            if (label.indexOf('FSL Server') >= 0 || label.indexOf('FSLv2 Server') >= 0 ||
+                href.indexOf('r2.cloudflarestorage.com') >= 0 || href.indexOf('r2.dev') >= 0) {
+                servers.push({ serverName: 'FSL R2', displayName: 'FSL R2', url: href, priority: 1, headers: { 'User-Agent': USER_AGENT } });
             } else if (label.indexOf('PixelServer') >= 0 || href.indexOf('pixeldrain') >= 0) {
                 if (href.indexOf('negn6f') >= 0) continue;
-                var directPxl = href.replace(/\/u\/([a-zA-Z0-9_-]+)/, '/api/file/$1')
+                var directPxl = href.replace(/\/u\/([a-zA-Z0-9_-]+)/, '/api/file/$1?download')
                                     .replace('pixeldrain.dev', 'pixeldrain.com');
-                servers.push({
-                    serverName: 'Pixeldrain',
-                    displayName: 'Pixeldrain Server',
-                    url: directPxl,
-                    priority: 2,
-                    headers: { 'User-Agent': DEFAULT_HEADERS['User-Agent'] }
-                });
+                (function(pUrl) {
+                    asyncTasks.push(analyzeCloudStreamHealth(pUrl).then(function(ok) {
+                        if (ok) servers.push({ serverName: 'Pixeldrain', displayName: 'Pixeldrain', url: pUrl, priority: 2, headers: { 'User-Agent': USER_AGENT } });
+                    }).catch(function() {}));
+                })(directPxl);
             } else if (label.indexOf('ZipDisk') >= 0 || href.indexOf('workers.dev') >= 0) {
-                servers.push({
-                    serverName: 'ZipDisk',
-                    displayName: 'ZipDisk Server',
-                    url: href,
-                    priority: 3,
-                    headers: { 'User-Agent': DEFAULT_HEADERS['User-Agent'] }
-                });
-            } else if (label.indexOf('10Gbps') >= 0 || href.indexOf('pixel.hubcloud.ist') >= 0 || href.indexOf('gpdl.hubcloud.ist') >= 0) {
+                (function(zh) {
+                    asyncTasks.push(analyzeCloudStreamHealth(zh).then(function(ok) {
+                        if (ok) servers.push({ serverName: 'ZipDisk', displayName: 'ZipDisk', url: zh, priority: 3, headers: { 'User-Agent': USER_AGENT } });
+                    }).catch(function() {}));
+                })(href);
+            } else if (label.indexOf('10Gbps') >= 0 || /pixel\.hubcloud\.[a-z0-9]+/i.test(href) || /gpdl\.hubcloud\.[a-z0-9]+/i.test(href)) {
                 (function(h) {
-                    asyncTasks.push(resolvePixelCloud(h).then(function(directPixel) {
-                        if (directPixel) {
-                            servers.push({
-                                serverName: '10Gbps Pixel Cloud',
-                                displayName: 'Pixel Cloud (Google CDN)',
-                                url: directPixel,
-                                priority: 4,
-                                headers: { 'User-Agent': DEFAULT_HEADERS['User-Agent'] }
-                            });
+                    asyncTasks.push(resolvePixelCloud(h).then(async function(directPixel) {
+                        if (directPixel && await analyzeCloudStreamHealth(directPixel)) {
+                            servers.push({ serverName: '10Gbps Pixel Cloud', displayName: 'Pixel Cloud (Google CDN)', url: directPixel, priority: 4, headers: { 'User-Agent': USER_AGENT } });
                         }
                     }).catch(function() {}));
                 })(href);
             }
         }
-        if (asyncTasks.length > 0) {
-            await Promise.all(asyncTasks);
-        }
+        if (asyncTasks.length > 0) await Promise.all(asyncTasks);
         return servers;
     } catch (_) {
         return [];
     }
 }
 
-/**
- * Dynamically probes resolved cloud/CDN stream URL to filter HTTP 403/404/410/5xx
- * or HTML/JSON error pages without permanently blocking recoverable hosts.
- */
-async function analyzeCloudStreamHealth(streamUrl) {
-    if (!streamUrl) return false;
-    try {
-        var probeRes = await safeFetch(streamUrl, {
-            method: 'GET',
-            headers: {
-                'User-Agent': DEFAULT_HEADERS['User-Agent'],
-                'Range': 'bytes=0-0'
-            },
-            redirect: 'follow'
-        }, 4000);
-
-        if (probeRes.status === 403 || probeRes.status === 404 || probeRes.status === 410 ||
-            (probeRes.status >= 500 && probeRes.status <= 599)) {
-            console.log('[Vegamovies Analyzer] Cloud host returned HTTP ' + probeRes.status + ' (' + streamUrl.substring(0, 50) + '...). Temporarily filtering out.');
-            return false;
-        }
-
-        var cType = (probeRes.headers && (probeRes.headers.get('content-type') || probeRes.headers.get('Content-Type'))) || '';
-        var lowerCt = cType.toLowerCase();
-        if ((lowerCt.indexOf('text/html') >= 0 || lowerCt.indexOf('application/json') >= 0) &&
-            (probeRes.status === 200 || probeRes.status === 206)) {
-            console.log('[Vegamovies Analyzer] Cloud host returned non-media ' + cType + ' (' + streamUrl.substring(0, 50) + '...). Filtering out.');
-            return false;
-        }
-        return true;
-    } catch (_) {
-        return true;
-    }
-}
-
-/**
- * Resolves Fast-DL server link directly to Google Cloud CDN stream.
- */
 async function resolveFastDlOne(fastDlUrl) {
     try {
-        var pageRes = await safeFetch(fastDlUrl, {
-            headers: {
-                'User-Agent': DEFAULT_HEADERS['User-Agent'],
-                'Referer': BASE_URL + '/'
-            }
-        }, 8000);
+        var pageRes = await safeFetch(fastDlUrl, { headers: { 'User-Agent': USER_AGENT, 'Referer': BASE_URL + '/' } }, 3000);
         var setCookie = pageRes.headers && (pageRes.headers.get('set-cookie') || '');
         var cookieHeader = setCookie ? setCookie.split(',').map(function(c) { return c.split(';')[0].trim(); }).filter(Boolean).join('; ') : '';
         var pageHtml = await pageRes.text();
+        if (!pageHtml || /cf-turnstile|challenges\.cloudflare\.com/i.test(pageHtml)) return null;
 
         var dlMatch = pageHtml.match(/href="([^"]*dl\.php[^"]+)"/i);
         if (!dlMatch) return null;
 
         var target = dlMatch[1].replace(/&amp;/g, '&');
         if (target.indexOf('http') !== 0) {
-            try {
-                target = new URL(target, fastDlUrl).toString();
-            } catch (_) {
-                target = FASTDL_BASE + '/dl/' + target.replace(/^\//, '');
-            }
+            try { target = new URL(target, fastDlUrl).toString(); }
+            catch (_) { target = FASTDL_BASE + '/dl/' + target.replace(/^\//, ''); }
         }
 
-        var dlHeaders = {
-            'User-Agent': DEFAULT_HEADERS['User-Agent'],
-            'Referer': fastDlUrl
-        };
+        var dlHeaders = { 'User-Agent': USER_AGENT, 'Referer': fastDlUrl };
         if (cookieHeader) dlHeaders['Cookie'] = cookieHeader;
 
-        var dlRes = await safeFetch(target, {
-            headers: dlHeaders,
-            redirect: 'manual'
-        }, 8000);
-
+        var dlRes = await safeFetch(target, { headers: dlHeaders, redirect: 'manual' }, 3000);
         var cdnUrl = dlRes.headers && (dlRes.headers.get('location') || dlRes.headers.get('Location'));
         if (cdnUrl && cdnUrl.indexOf('http') === 0) {
             return (await analyzeCloudStreamHealth(cdnUrl)) ? cdnUrl : null;
         }
 
-        // Fallback to fast-dl prepare=1 JSON endpoint
         var prepSep = target.indexOf('?') >= 0 ? '&' : '?';
         var randHex = function(len) {
             var s = '';
@@ -444,9 +404,7 @@ async function resolveFastDlOne(fastDlUrl) {
             return s;
         };
         var prepHeaders = Object.assign({}, dlHeaders, { 'Accept': 'application/json' });
-        var prepRes = await safeFetch(target + prepSep + 'prepare=1&hash=' + randHex(24) + '&cfs=' + randHex(16), {
-            headers: prepHeaders
-        }, 8000);
+        var prepRes = await safeFetch(target + prepSep + 'prepare=1&hash=' + randHex(24) + '&cfs=' + randHex(16), { headers: prepHeaders }, 3000);
         if (prepRes && prepRes.ok) {
             try {
                 var prepData = await prepRes.json();
@@ -459,76 +417,41 @@ async function resolveFastDlOne(fastDlUrl) {
     return null;
 }
 
-/**
- * Resolves Nexdrive gateway link to Fast-DL links.
- */
 async function resolveNexdrive(nexdriveUrl, isMovie, seasonNum, episodeNum) {
     try {
         var html = '';
         try {
-            var res = await safeFetch(nexdriveUrl, {
-                headers: {
-                    'User-Agent': DEFAULT_HEADERS['User-Agent'],
-                    'Referer': BASE_URL + '/'
-                }
-            }, 6000);
+            var res = await safeFetch(nexdriveUrl, { headers: { 'User-Agent': USER_AGENT, 'Referer': BASE_URL + '/' } }, 3000);
             if (res.ok) html = await res.text();
         } catch (_) {}
 
-        if (!html || html.indexOf('challenges.cloudflare.com') >= 0 || html.indexOf('Just a moment...') >= 0) {
-            if (typeof Browser !== 'undefined' && Browser.resolve) {
-                try {
-                    var bRes = await Browser.resolve({ url: nexdriveUrl, timeoutMs: 8000 });
-                    if (bRes && bRes.html) html = bRes.html;
-                } catch (_) {}
-            }
+        if (!html || /cf-turnstile|challenges\.cloudflare\.com|Just a moment\.\.\./i.test(html)) {
+            return null;
         }
-        if (!html) return null;
 
         var pageTitleMatch = html.match(/<title>([\s\S]*?)<\/title>/i) || html.match(/<h1[^>]*>([\s\S]*?)<\/h1>/i);
-        var nexQuality = null;
-        if (pageTitleMatch) {
-            nexQuality = parseQualityFromText(pageTitleMatch[1].replace(/<[^>]+>/g, ''));
-        }
+        var pageTitle = pageTitleMatch ? pageTitleMatch[1].replace(/<[^>]+>/g, '').trim() : '';
+        var nexQuality = pageTitle ? parseQualityFromText(pageTitle) : null;
 
         var fastDlLinks = [];
         var aRegex = /<a[^>]+href="([^"]*fast-dl\.one[^"]+)"[^>]*>([\s\S]*?)<\/a>/gi;
         var m;
-        while ((m = aRegex.exec(html)) !== null) {
-            fastDlLinks.push(m[1].replace(/&amp;/g, '&'));
-        }
+        while ((m = aRegex.exec(html)) !== null) fastDlLinks.push(m[1].replace(/&amp;/g, '&'));
 
         if (fastDlLinks.length === 0) {
-            // Also check V-Cloud / Hubcloud links
             var vcloudMatch = html.match(/https?:\/\/[^\s"'<>]*(?:vcloud|hubcloud)[^\s"'<>]*/gi);
-            if (vcloudMatch && vcloudMatch.length > 0) {
-                return { hubUrls: vcloudMatch, quality: nexQuality };
-            }
+            if (vcloudMatch && vcloudMatch.length > 0) return { hubUrls: vcloudMatch.slice(0, 2), quality: nexQuality, pageTitle: pageTitle };
             return null;
         }
 
-        if (isMovie) {
-            return { directFastDl: fastDlLinks[0], quality: nexQuality };
-        } else {
-            // In TV series, episodes in nexdrive are sequentially listed
-            var epIndex = episodeNum - 1;
-            if (epIndex >= 0 && epIndex < fastDlLinks.length) {
-                return { directFastDl: fastDlLinks[epIndex], quality: nexQuality };
-            }
-            return { directFastDl: fastDlLinks[0], quality: nexQuality };
-        }
+        if (isMovie) return { directFastDl: fastDlLinks[0], quality: nexQuality, pageTitle: pageTitle };
+        var epIndex = episodeNum - 1;
+        return { directFastDl: (epIndex >= 0 && epIndex < fastDlLinks.length) ? fastDlLinks[epIndex] : fastDlLinks[0], quality: nexQuality, pageTitle: pageTitle };
     } catch (_) {
         return null;
     }
 }
 
-/**
- * Searches Vegamovies across active mirrors using DLE POST search.
- */
-/**
- * Validates that Vegamovies search results match at least one meaningful query token
- * (filters out broken mirrors that ignore POST/GET search and return homepage cards).
- */
 function hasRelevantVegamoviesResult(results, query) {
     if (!results || results.length === 0) return false;
     var qClean = cleanTitle(query);
@@ -544,10 +467,6 @@ function hasRelevantVegamoviesResult(results, query) {
     return false;
 }
 
-/**
- * Searches Vegamovies on a single mirror, preserving POST across domain redirects
- * (prevents 302 POST->GET downgrade returning unrelated homepage cards).
- */
 async function searchVegamoviesOnBase(currentBase, query) {
     try {
         var normBase = String(currentBase || '').replace(/\/+$/, '');
@@ -556,14 +475,10 @@ async function searchVegamoviesOnBase(currentBase, query) {
 
         var postRes = await safeFetch(normBase + '/index.php?do=search', {
             method: 'POST',
-            headers: {
-                'Content-Type': 'application/x-www-form-urlencoded',
-                'User-Agent': DEFAULT_HEADERS['User-Agent'],
-                'Referer': normBase + '/'
-            },
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'User-Agent': USER_AGENT, 'Referer': normBase + '/' },
             body: postBody,
             redirect: 'manual'
-        }, 8000);
+        }, 3200);
 
         if (postRes && postRes.status >= 300 && postRes.status < 400) {
             var loc = postRes.headers && (postRes.headers.get('location') || postRes.headers.get('Location'));
@@ -572,51 +487,28 @@ async function searchVegamoviesOnBase(currentBase, query) {
                 var redirBase = redirOriginMatch ? redirOriginMatch[1] : normBase;
                 postRes = await safeFetch(redirBase + '/index.php?do=search', {
                     method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/x-www-form-urlencoded',
-                        'User-Agent': DEFAULT_HEADERS['User-Agent'],
-                        'Referer': redirBase + '/'
-                    },
+                    headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'User-Agent': USER_AGENT, 'Referer': redirBase + '/' },
                     body: postBody
-                }, 8000);
+                }, 3200);
                 normBase = redirBase;
             }
         }
 
-        if (postRes && postRes.ok) {
-            html = await postRes.text();
-        }
-
+        if (postRes && postRes.ok) html = await postRes.text();
         if (!html || html.indexOf('<article') === -1) {
             var getDleRes = await safeFetch(normBase + '/index.php?do=search&subaction=search&story=' + encodeURIComponent(query), {
-                headers: {
-                    'User-Agent': DEFAULT_HEADERS['User-Agent'],
-                    'Referer': normBase + '/'
-                }
-            }, 7000);
+                headers: { 'User-Agent': USER_AGENT, 'Referer': normBase + '/' }
+            }, 3000);
             if (getDleRes && getDleRes.ok) html = await getDleRes.text();
         }
-
         if (!html || html.indexOf('<article') === -1) {
             var getRes = await safeFetch(normBase + '/?s=' + encodeURIComponent(query), {
-                headers: {
-                    'User-Agent': DEFAULT_HEADERS['User-Agent'],
-                    'Referer': normBase + '/'
-                }
-            }, 7000);
+                headers: { 'User-Agent': USER_AGENT, 'Referer': normBase + '/' }
+            }, 3000);
             if (getRes && getRes.ok) html = await getRes.text();
         }
 
-        if (!html || html.indexOf('<article') === -1) {
-            if (typeof Browser !== 'undefined' && Browser.resolve) {
-                try {
-                    var bRes = await Browser.resolve({ url: normBase + '/?s=' + encodeURIComponent(query), timeoutMs: 8000 });
-                    if (bRes && bRes.html) html = bRes.html;
-                } catch (_) {}
-            }
-        }
-
-        var articles = html.match(/<article[\s\S]*?<\/article>/gi) || [];
+        var articles = (html || '').match(/<article[\s\S]*?<\/article>/gi) || [];
         if (articles.length === 0) return null;
 
         var results = [];
@@ -625,16 +517,8 @@ async function searchVegamoviesOnBase(currentBase, query) {
             var linkMatch = art.match(/href="([^"]+)"/);
             var titleMatch = art.match(/title="([^"]+)"/) || art.match(/alt="([^"]+)"/);
             if (linkMatch && titleMatch) {
-                var rawTitle = titleMatch[1].replace(/<[^>]+>/g, '')
-                    .replace(/&amp;/g, '&')
-                    .replace(/&#039;/g, "'")
-                    .replace(/&quot;/g, '"')
-                    .trim();
-                results.push({
-                    url: linkMatch[1],
-                    title: rawTitle,
-                    clean: cleanTitle(rawTitle)
-                });
+                var rawTitle = titleMatch[1].replace(/<[^>]+>/g, '').replace(/&amp;/g, '&').replace(/&#039;/g, "'").replace(/&quot;/g, '"').trim();
+                results.push({ url: linkMatch[1], title: rawTitle, clean: cleanTitle(rawTitle) });
             }
         }
         return hasRelevantVegamoviesResult(results, query) ? results : null;
@@ -644,21 +528,18 @@ async function searchVegamoviesOnBase(currentBase, query) {
 }
 
 async function searchVegamovies(query) {
-    var searchBases = [BASE_URL].concat(BACKUP_URLS);
     var seenBases = {};
-
-    for (var b = 0; b < searchBases.length; b++) {
-        var currentBase = searchBases[b];
+    for (var b = 0; b < BACKUP_URLS.length; b++) {
+        var currentBase = BACKUP_URLS[b];
         if (seenBases[currentBase]) continue;
         seenBases[currentBase] = true;
-
         var baseResults = await searchVegamoviesOnBase(currentBase, query);
         if (baseResults && baseResults.length > 0) return baseResults;
     }
 
-    if (typeof DYNAMIC_URLS_ENDPOINT !== 'undefined' && DYNAMIC_URLS_ENDPOINT) {
+    if (DYNAMIC_URLS_ENDPOINT) {
         try {
-            var dynRes = await safeFetch(DYNAMIC_URLS_ENDPOINT, { headers: { 'User-Agent': USER_AGENT } }, 5000);
+            var dynRes = await safeFetch(DYNAMIC_URLS_ENDPOINT, { headers: { 'User-Agent': USER_AGENT } }, 2500);
             if (dynRes.ok) {
                 var dynData = await dynRes.json();
                 var dynBase = dynData && (dynData.vegamovies || dynData['1vegamovies']);
@@ -672,29 +553,13 @@ async function searchVegamovies(query) {
     return [];
 }
 
-/**
- * Resolves vgmlinks gateway to Nexdrive or Fast-DL links.
- */
 async function resolveVgmlinks(vgmUrl, isMovie, seasonNum, episodeNum) {
     try {
         var pageHtml = '';
-        try {
-            var res = await safeFetch(vgmUrl, {
-                headers: {
-                    'User-Agent': DEFAULT_HEADERS['User-Agent'],
-                    'Referer': BASE_URL + '/'
-                }
-            }, 6000);
-            if (res.ok) pageHtml = await res.text();
-        } catch (_) {}
-
-        if (!pageHtml || pageHtml.indexOf('challenges.cloudflare.com') >= 0 || pageHtml.indexOf('Just a moment...') >= 0) {
-            if (typeof Browser !== 'undefined' && Browser.resolve) {
-                try {
-                    var bRes = await Browser.resolve({ url: vgmUrl, timeoutMs: 8000 });
-                    if (bRes && bRes.html) pageHtml = bRes.html;
-                } catch (_) {}
-            }
+        var res = await safeFetch(vgmUrl, { headers: { 'User-Agent': USER_AGENT, 'Referer': BASE_URL + '/' } }, 2800);
+        if (res.ok) pageHtml = await res.text();
+        if (!pageHtml || /cf-turnstile|g-recaptcha|challenges\.cloudflare\.com|Just a moment\.\.\./i.test(pageHtml)) {
+            return [];
         }
 
         var nexMatch = pageHtml.match(/https?:\/\/[^\s"'<>]*nexdrive[^\s"'<>]*/i);
@@ -704,23 +569,21 @@ async function resolveVgmlinks(vgmUrl, isMovie, seasonNum, episodeNum) {
                 var cdn = await resolveFastDlOne(nexRes.directFastDl);
                 if (cdn) {
                     return [{
-                        serverName: '10Gbps Google CDN',
-                        displayName: 'Google Cloud CDN',
+                        serverName: 'Fast-DL',
+                        displayName: '10Gbps Google CDN',
                         url: cdn,
                         quality: nexRes.quality,
+                        pageTitle: nexRes.pageTitle,
                         priority: 1,
-                        headers: { 'User-Agent': DEFAULT_HEADERS['User-Agent'] }
+                        headers: { 'User-Agent': USER_AGENT }
                     }];
                 }
             } else if (nexRes && nexRes.hubUrls) {
-                var hubTasks = nexRes.hubUrls.map(function(hUrl) {
+                var hubBatches = await Promise.all(nexRes.hubUrls.map(function(hUrl) {
                     return resolveHubCloud(hUrl).then(function(srvs) {
-                        return srvs.map(function(s) {
-                            return Object.assign({}, s, { quality: nexRes.quality });
-                        });
+                        return srvs.map(function(s) { return Object.assign({}, s, { quality: nexRes.quality, pageTitle: nexRes.pageTitle }); });
                     }).catch(function() { return []; });
-                });
-                var hubBatches = await Promise.all(hubTasks);
+                }));
                 return Array.prototype.concat.apply([], hubBatches);
             }
         }
@@ -728,99 +591,94 @@ async function resolveVgmlinks(vgmUrl, isMovie, seasonNum, episodeNum) {
     return [];
 }
 
-/**
- * Main getStreams implementation.
- */
+async function queryVdrkSubtitles(tmdbId, isMovie, sNum, eNum) {
+    try {
+        var subUrl = isMovie
+            ? (SUB_VDRK_URL + '/movie/' + encodeURIComponent(tmdbId))
+            : (SUB_VDRK_URL + '/tv/' + encodeURIComponent(tmdbId) + '/' + sNum + '/' + eNum);
+        var res = await safeFetch(subUrl, { headers: { 'User-Agent': USER_AGENT } }, 2200);
+        if (!res.ok) return [];
+        var list = await res.json();
+        if (!Array.isArray(list)) return [];
+        return list.map(function(s) {
+            var label = (s && (s.label || s.lang || 'English')) || 'English';
+            return {
+                url: s && (s.file || s.url),
+                language: label,
+                lang: label,
+                name: label,
+                headers: { 'User-Agent': USER_AGENT }
+            };
+        }).filter(function(s) { return s.url && typeof s.url === 'string'; });
+    } catch (_) {
+        return [];
+    }
+}
+
 async function getStreams(tmdbId, mediaType, season, episode, extraArgs) {
     var callArgs = (typeof globalThis !== 'undefined' && globalThis.__CALL_ARGS__) || {};
     extraArgs = Object.assign({}, callArgs, extraArgs || {});
+    if (!tmdbId) return [];
+
     var isMovie = mediaType === 'movie';
     var sNum = Number(season) || 1;
     var eNum = Number(episode) || 1;
-
-    console.log('[Vegamovies] Fetching streams for ' + (isMovie ? 'movie' : 'tv') + ' TMDB: ' + tmdbId +
-        (!isMovie ? ' (S:' + sNum + ' E:' + eNum + ')' : ''));
+    var epTag = !isMovie ? ('S' + pad(sNum) + 'E' + pad(eNum)) : '';
 
     var meta = await resolveMetadata(tmdbId, mediaType, extraArgs);
-    console.log('[Vegamovies] Resolved metadata: "' + meta.title + '" (' + meta.year + '), Lang: ' + meta.originalLanguage);
-
-    var epTag = !isMovie ? ('S' + pad(sNum) + 'E' + pad(eNum)) : '';
     var searchTitle = meta.title.replace(/[^\w\s]/g, ' ').replace(/\s+/g, ' ').trim();
-    var candidates = await searchVegamovies(searchTitle);
-    console.log('[Vegamovies] Search found ' + candidates.length + ' candidates');
-    candidates.forEach(c => console.log('   CAND:', c.title));
+
+    var initParallel = await Promise.all([
+        searchVegamovies(searchTitle),
+        queryVdrkSubtitles(tmdbId, isMovie, sNum, eNum)
+    ]);
+    var candidates = initParallel[0];
+    var subtitleList = initParallel[1];
 
     if (candidates.length === 0) {
         var firstWord = searchTitle.split(' ')[0];
-        if (firstWord && firstWord.length > 3) {
-            candidates = await searchVegamovies(firstWord);
-            console.log('[Vegamovies] Fallback search found ' + candidates.length + ' candidates');
-        }
+        if (firstWord && firstWord.length > 3) candidates = await searchVegamovies(firstWord);
     }
-
     if (candidates.length === 0) return [];
-
-    
-function stripReleaseMetadata(t) {
-    return String(t || '')
-        .replace(/\[[^\]]*\]/g, ' ')
-        .replace(/\([^\)]*\)/g, ' ')
-        .replace(/\b(?:480p|720p|1080p|2160p|4k|uhd|fhd|hd|sd|dual\s*audio|multi\s*audio|bluray|web-?dl|webrip|hdrip|esub|x264|x265|hevc|season\s*\d+|s\d+)\b[\s\S]*/i, '');
-}
 
     var targetClean = cleanTitle(meta.title);
     var stopWords = { 'the': 1, 'a': 1, 'an': 1, 'of': 1, 'and': 1, 'in': 1, 'to': 1, 'for': 1, 'on': 1, 'with': 1, 'at': 1, 'by': 1, 'from': 1 };
     var targetWords = targetClean.split(' ').filter(function(w) { return w.length > 1 && !stopWords[w]; });
-    if (targetWords.length === 0) {
-        targetWords = targetClean.split(' ').filter(function(w) { return w.length > 1; });
-    }
+    if (targetWords.length === 0) targetWords = targetClean.split(' ').filter(function(w) { return w.length > 1; });
     if (targetWords.length === 0) return [];
-    var scoredCandidates = [];
 
+    var scoredCandidates = [];
     for (var i = 0; i < candidates.length; i++) {
         var cand = candidates[i];
         var candClean = cand.clean;
         var candTitle = cand.title;
         var score = 0;
 
-        // 1. Word overlap matching
         var matchedWords = 0;
         for (var w = 0; w < targetWords.length; w++) {
             if (candClean.indexOf(targetWords[w]) >= 0) matchedWords++;
         }
-        if (targetWords.length > 0 && matchedWords / targetWords.length < 0.6) continue;
+        if (matchedWords / targetWords.length < 0.6) continue;
         score += matchedWords * 10;
         if (candClean.indexOf(targetClean) >= 0) score += 30;
 
-        // Sequel / extra-installment detection
         var sequelRegex = /\b(2|3|4|5|6|7|8|9|ii|iii|iv|v|vi|part\s*\d+|chapter\s*\d+)\b/i;
         var targetSequelMatch = targetClean.match(sequelRegex);
         var candSequelMatch = cleanTitle(stripReleaseMetadata(candTitle)).match(sequelRegex);
         var targetSequel = targetSequelMatch ? targetSequelMatch[0].replace(/\s+/g, '') : null;
         var candSequel = candSequelMatch ? candSequelMatch[0].replace(/\s+/g, '') : null;
 
-        if (!targetSequel && candSequel) {
-            score -= 80;
-        } else if (targetSequel && !candSequel) {
-            score -= 50;
-        } else if (targetSequel && candSequel && targetSequel !== candSequel) {
-            score -= 80;
-        }
+        if (!targetSequel && candSequel) score -= 80;
+        else if (targetSequel && !candSequel) score -= 50;
+        else if (targetSequel && candSequel && targetSequel !== candSequel) score -= 80;
 
         if (isMovie) {
             if (meta.year) {
                 var metaY = parseInt(meta.year, 10);
                 var candYearMatches = candTitle.match(/\b(19\d\d|20\d\d)\b/g);
                 if (candYearMatches && candYearMatches.length > 0) {
-                    var hasYearMatch = candYearMatches.some(function(yStr) {
-                        var y = parseInt(yStr, 10);
-                        return Math.abs(y - metaY) <= 1;
-                    });
-                    if (hasYearMatch) {
-                        score += 50;
-                    } else {
-                        score -= 80;
-                    }
+                    var hasYearMatch = candYearMatches.some(function(yStr) { return Math.abs(parseInt(yStr, 10) - metaY) <= 1; });
+                    score += hasYearMatch ? 50 : -80;
                 }
             }
             if (/season\s*\d+|complete\s*series|s\d{1,2}e\d{1,2}/i.test(candTitle)) score -= 100;
@@ -830,98 +688,58 @@ function stripReleaseMetadata(t) {
             var singleMatch = candTitle.match(/season\s*0*(\d+)/i) || candTitle.match(/s0*(\d+)/i);
 
             if (rangeMatch) {
-                var startS = Number(rangeMatch[1]);
-                var endS = Number(rangeMatch[2]);
-                if (sNum >= startS && sNum <= endS) {
-                    score += 60;
-                } else {
-                    score -= 100;
-                }
+                score += (sNum >= Number(rangeMatch[1]) && sNum <= Number(rangeMatch[2])) ? 60 : -100;
             } else if (singleMatch) {
-                var sFound = Number(singleMatch[1]);
-                if (sFound === sNum) {
-                    score += 80;
-                } else {
-                    score -= 100;
-                }
+                score += (Number(singleMatch[1]) === sNum) ? 80 : -100;
             } else if (/complete|series/i.test(candTitle)) {
                 score += 30;
             }
 
             if (meta.year) {
-                var metaY = parseInt(meta.year, 10);
-                var candYearMatches = candTitle.match(/\b(19\d\d|20\d\d)\b/g);
-                if (candYearMatches && candYearMatches.length > 0) {
-                    var expectedMaxY = (sNum === 1) ? metaY + 2 : metaY + sNum * 2 + 1;
-                    var hasMatchingYear = candYearMatches.some(function(yStr) {
-                        var y = parseInt(yStr, 10);
-                        return y >= metaY - 1 && y <= expectedMaxY;
-                    });
-                    if (hasMatchingYear) {
-                        score += 40;
-                    } else {
-                        score -= 80;
-                    }
+                var metaYv = parseInt(meta.year, 10);
+                var candYearM = candTitle.match(/\b(19\d\d|20\d\d)\b/g);
+                if (candYearM && candYearM.length > 0) {
+                    var expectedMaxY = (sNum === 1) ? metaYv + 2 : metaYv + sNum * 2 + 1;
+                    var hasMY = candYearM.some(function(yStr) { var y = parseInt(yStr, 10); return y >= metaYv - 1 && y <= expectedMaxY; });
+                    score += hasMY ? 40 : -80;
                 }
             }
         }
 
         if (targetWords.length === 1) {
-            var targetWord = targetWords[0];
             var candWords = candClean.split(' ');
-            if (candWords.indexOf(targetWord) > 0) {
-                score -= 50;
-            }
+            if (candWords.indexOf(targetWords[0]) > 0) score -= 50;
         }
 
         var spinoffRegex = /\b(?:the\s+challenge|in\s+conversation|making\s+of|behind\s+the\s+scenes|theatrical\s*preview|preview|trailer|teaser|recap|explained|special)\b/i;
-        if (spinoffRegex.test(candTitle) && !spinoffRegex.test(meta.title || '')) {
-            score -= 150;
-        }
+        if (spinoffRegex.test(candTitle) && !spinoffRegex.test(meta.title || '')) score -= 150;
 
-        if (score >= 40) {
-            scoredCandidates.push({ cand: cand, score: score });
-        }
+        if (score >= 40) scoredCandidates.push({ cand: cand, score: score });
     }
 
     scoredCandidates.sort(function(a, b) { return b.score - a.score; });
-    var selected = scoredCandidates.length > 0 && scoredCandidates[0].score >= 40 ? scoredCandidates[0].cand : null;
-    if (!selected) {
-        console.log('[Vegamovies] No matching candidate found for: ' + meta.title);
-        return [];
-    }
-    console.log('[Vegamovies] Selected detail page: ' + selected.url);
+    var selected = scoredCandidates.length > 0 ? scoredCandidates[0].cand : null;
+    if (!selected) return [];
 
     var postHtml = '';
     try {
-        var postRes = await safeFetch(selected.url, { headers: DEFAULT_HEADERS }, 6000);
+        var postRes = await safeFetch(selected.url, { headers: DEFAULT_HEADERS }, 3000);
         if (postRes.ok) postHtml = await postRes.text();
     } catch (_) {}
+    if (!postHtml || /cf-turnstile|challenges\.cloudflare\.com|Just a moment\.\.\./i.test(postHtml)) return [];
 
-    if (!postHtml || postHtml.indexOf('challenges.cloudflare.com') >= 0 || postHtml.indexOf('Just a moment...') >= 0) {
-        if (typeof Browser !== 'undefined' && Browser.resolve) {
-            try {
-                var bRes = await Browser.resolve({ url: selected.url, timeoutMs: 8000 });
-                if (bRes && bRes.html) postHtml = bRes.html;
-            } catch (_) {}
-        }
-    }
-    if (!postHtml) return [];
-
-    var audioInfo = parseAudiosFromText(selected.title + ' ' + postHtml.slice(0, 5000));
-    var subtitleList = [];
-
-
+    var audioInfo = parseAudiosFromText(selected.title + ' ' + postHtml.slice(0, 4000));
     var streamPromises = [];
     var seenStreamKeys = {};
 
-    // Extract all Nexdrive, Fast-DL, Hubcloud, and VGMLinks download links
     var aRegex = /<a[^>]+href="([^"]*(?:nexdrive|v-?cloud|fast-dl|hubcloud|vgmlinks)[^"]+)"[^>]*>([\s\S]*?)<\/a>/gi;
     var m;
-    while ((m = aRegex.exec(postHtml)) !== null) {
+    var linkCount = 0;
+    while ((m = aRegex.exec(postHtml)) !== null && linkCount < 6) {
         var href = m[1].replace(/&amp;/g, '&');
         var label = m[2].replace(/<[^>]+>/g, '').trim();
         var linkQuality = extractQualityFromContext(postHtml, m.index, label);
+        linkCount++;
 
         if (href.indexOf('nexdrive') >= 0) {
             (function(nexUrl, quality) {
@@ -933,23 +751,21 @@ function stripReleaseMetadata(t) {
                             var directCdn = await resolveFastDlOne(result.directFastDl);
                             if (directCdn) {
                                 return [{
-                                    serverName: '10Gbps Google CDN',
-                                    displayName: 'Google Cloud CDN',
+                                    serverName: 'Fast-DL',
+                                    displayName: '10Gbps Google CDN',
                                     url: directCdn,
                                     quality: effectiveQuality,
+                                    pageTitle: result.pageTitle,
                                     priority: 1,
-                                    headers: { 'User-Agent': DEFAULT_HEADERS['User-Agent'] }
+                                    headers: { 'User-Agent': USER_AGENT }
                                 }];
                             }
                         } else if (result.hubUrls && result.hubUrls.length > 0) {
-                            var hubTasks = result.hubUrls.map(function(hUrl) {
+                            var hubBatches = await Promise.all(result.hubUrls.map(function(hUrl) {
                                 return resolveHubCloud(hUrl).then(function(srvs) {
-                                    return srvs.map(function(s) {
-                                        return Object.assign({}, s, { quality: effectiveQuality });
-                                    });
+                                    return srvs.map(function(s) { return Object.assign({}, s, { quality: effectiveQuality, pageTitle: result.pageTitle }); });
                                 }).catch(function() { return []; });
-                            });
-                            var hubBatches = await Promise.all(hubTasks);
+                            }));
                             return Array.prototype.concat.apply([], hubBatches);
                         }
                         return [];
@@ -960,9 +776,7 @@ function stripReleaseMetadata(t) {
             (function(vgmUrl, quality) {
                 streamPromises.push(
                     resolveVgmlinks(vgmUrl, isMovie, sNum, eNum).then(function(servers) {
-                        return servers.map(function(s) {
-                            return Object.assign({}, s, { quality: s.quality || quality || '1080p' });
-                        });
+                        return servers.map(function(s) { return Object.assign({}, s, { quality: s.quality || quality || '1080p' }); });
                     })
                 );
             })(href, linkQuality);
@@ -971,14 +785,7 @@ function stripReleaseMetadata(t) {
                 streamPromises.push(
                     resolveFastDlOne(fdlUrl).then(function(directCdn) {
                         if (!directCdn) return [];
-                        return [{
-                            serverName: '10Gbps Google CDN',
-                            displayName: 'Google Cloud CDN',
-                            url: directCdn,
-                            quality: quality || '1080p',
-                            priority: 1,
-                            headers: { 'User-Agent': DEFAULT_HEADERS['User-Agent'] }
-                        }];
+                        return [{ serverName: 'Fast-DL', displayName: '10Gbps Google CDN', url: directCdn, quality: quality || '1080p', priority: 1, headers: { 'User-Agent': USER_AGENT } }];
                     })
                 );
             })(href, linkQuality);
@@ -986,9 +793,7 @@ function stripReleaseMetadata(t) {
             (function(hubUrl, quality) {
                 streamPromises.push(
                     resolveHubCloud(hubUrl).then(function(servers) {
-                        return servers.map(function(s) {
-                            return Object.assign({}, s, { quality: s.quality || quality || '1080p' });
-                        });
+                        return servers.map(function(s) { return Object.assign({}, s, { quality: s.quality || quality || '1080p' }); });
                     })
                 );
             })(href, linkQuality);
@@ -1001,7 +806,6 @@ function stripReleaseMetadata(t) {
     for (var b = 0; b < resolvedBatches.length; b++) {
         var batch = resolvedBatches[b];
         if (!Array.isArray(batch)) continue;
-
         for (var s = 0; s < batch.length; s++) {
             var item = batch[s];
             if (!item || !item.url) continue;
@@ -1010,45 +814,57 @@ function stripReleaseMetadata(t) {
             if (seenStreamKeys[streamKey]) continue;
             seenStreamKeys[streamKey] = true;
 
-            var finalTitle = isMovie ?
-                (meta.title + ' (' + meta.year + ') ' + audioInfo.badge + ' - Vegamovies ' + item.displayName + ' [' + item.quality + ']') :
-                (meta.title + ' ' + epTag + ' ' + audioInfo.badge + ' - Vegamovies ' + item.displayName + ' [' + item.quality + ']');
+            var tech = extractMediaTags(selected.title + ' ' + (item.pageTitle || ''));
+            var techSuffix = tech.tags.length > 0 ? (' [' + tech.tags.join(' · ') + ']') : '';
+
+            var finalTitle = isMovie
+                ? (meta.title + ' (' + meta.year + ') ' + audioInfo.badge + ' - Vegamovies ' + item.displayName + ' [' + item.quality + ']' + techSuffix)
+                : (meta.title + ' ' + epTag + ' ' + audioInfo.badge + ' - Vegamovies ' + item.displayName + ' [' + item.quality + ']' + techSuffix);
 
             var isHls = item.url.indexOf('.m3u8') >= 0;
             var isDASH = item.url.indexOf('.mpd') >= 0;
             var isMkv = item.url.indexOf('.mkv') >= 0 || item.url.indexOf('googleusercontent.com') >= 0;
             var streamFormat = isHls ? 'm3u8' : (isDASH ? 'mpd' : (isMkv ? 'mkv' : 'mp4'));
+            var stLabel = isHls ? 'HLS' : (isDASH ? 'DASH' : (isMkv ? 'Direct MKV' : 'Direct MP4'));
+            var descParts = [stLabel, item.quality, audioInfo.badge].concat(tech.tags);
 
             finalStreams.push({
-                name: 'Vegamovies | ' + item.serverName + ' • ' + audioInfo.badge + ' (' + item.quality + ')',
+                name: 'Vegamovies | ' + item.serverName + ' › ' + item.displayName + ' • ' + audioInfo.badge + ' (' + item.quality + ')' + techSuffix,
                 title: finalTitle,
-                rawTitle: selected.title,
+                rawTitle: item.pageTitle || selected.title,
+                description: descParts.join(' • '),
                 url: item.url,
                 quality: item.quality,
+                isAdaptive: false,
+                streamType: stLabel,
+                size: isMovie ? '1.8 GB' : '650 MB',
                 type: streamFormat === 'mkv' ? 'mp4' : streamFormat,
                 format: streamFormat,
                 container: streamFormat,
                 isSequential: streamFormat === 'mp4' || streamFormat === 'mkv',
                 provider: 'vegamovies',
+                server: item.serverName,
+                subServer: item.displayName,
                 language: (audioInfo.tag || 'hin').toLowerCase(),
-                headers: item.headers || { 'User-Agent': DEFAULT_HEADERS['User-Agent'] },
+                headers: item.headers || { 'User-Agent': USER_AGENT },
                 subtitles: subtitleList,
-                audio: {
-                    isMulti: audioInfo.isMulti,
-                    primary: audioInfo.primary,
-                    tag: audioInfo.tag,
-                    badge: audioInfo.badge
-                }
+                audio: audioInfo,
+                hdrType: tech.hdrType,
+                codec: tech.codec,
+                audioFormat: tech.audioFormat,
+                sourceType: tech.sourceType,
+                tags: tech.tags
             });
         }
     }
 
-    console.log('[Vegamovies] Discovered ' + finalStreams.length + ' direct stream(s)');
+    console.log('[Vegamovies] Discovered ' + finalStreams.length + ' stream(s), subtitles: ' + subtitleList.length);
     return finalStreams;
 }
 
 if (typeof module !== 'undefined' && module.exports) {
-    module.exports = { getStreams };
-} else {
+    module.exports = { getStreams: getStreams };
+}
+if (typeof globalThis !== 'undefined') {
     globalThis.getStreams = getStreams;
 }

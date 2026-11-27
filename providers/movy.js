@@ -1,36 +1,29 @@
 /**
- * Movy.sx Provider Plugin for Nuvio / Universal Streaming Architecture
+ * Movy.sx Provider Plugin for Euthopiar / Universal Streaming Architecture
  *
- * Implements high-speed parallel scraping across Movy.sx CDN servers
- * (Miami, Boise, Atlanta, Phoenix, Vegas, Reno, Oakland, Seattle, Dallas, Berlin, Paris)
- * with proprietary stream cipher reverse-engineered from Next.js bundles.
- *
- * Audio language is dynamically determined in real-time from media metadata,
- * stream properties, and server capability (e.g. Japanese for anime, English for US films,
- * German/French for dedicated dubs, and Multi whenever multiple audio tracks are available).
+ * Implements high-speed parallel scraping across active Movy CDN servers
+ * with stream cipher decryption, dynamic multi-audio tagging, Adaptive/Direct
+ * stream classification, and cross-server subtitle aggregation.
  */
 
-const BASE_URL = 'https://www.movy.sx';
-const STREAM_API_URL = 'https://api.wecollege.net';
-const TMDB_PROXY_URL = 'https://db.wecollege.net/3';
+/* =========================================================================
+   CONFIG BLOCK: If site changes domain, update ONLY the URLs in this block.
+   ========================================================================= */
+var BASE_URL = 'https://www.movy.sx';
+var STREAM_API_URL = 'https://api.wecollege.net';
+var TMDB_PROXY_URL = 'https://db.wecollege.net/3';
+/* ========================================================================= */
 
-const DEFAULT_HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36',
+var DEFAULT_HEADERS = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
     'Referer': BASE_URL + '/',
     'Origin': BASE_URL
 };
 
-// Stream Cipher constants and helpers
-const CIPHER_CONSTANTS = [
-    0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5,
-    0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
-    0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3,
-    0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174
-];
-const MAGIC_HEADER = [109, 118, 109, 49]; // "mvm1"
+var MAGIC_HEADER = [109, 118, 109, 49]; // "mvm1"
 
 async function fetchWithTimeout(url, options, timeoutMs) {
-    timeoutMs = timeoutMs || 5000;
+    timeoutMs = timeoutMs || 2800;
     var timer;
     var timeoutPromise = new Promise(function(_, reject) {
         timer = setTimeout(function() {
@@ -66,97 +59,91 @@ function rotateLeft(e, a) {
     return a === 0 ? (e >>> 0) : ((e << a | e >>> (32 - a)) >>> 0);
 }
 
-/**
- * Decrypts custom-encrypted response from Movy stream endpoints.
- */
 function decryptPayload(cipherText, seed, tmdbId) {
     if (!cipherText || typeof cipherText !== 'string') {
         throw new Error('Invalid cipherText input');
     }
 
-    const b64 = cipherText.replace(/-/g, '+').replace(/_/g, '/').padEnd(4 * Math.ceil(cipherText.length / 4), '=');
-    const binaryStr = typeof atob === 'function' ? atob(b64) : '';
-    const totalLen = binaryStr.length;
-    const encryptedBytes = new Uint8Array(totalLen);
-    for (let i = 0; i < totalLen; i++) {
+    var b64 = cipherText.replace(/-/g, '+').replace(/_/g, '/');
+    while (b64.length % 4) b64 += '=';
+    var binaryStr = typeof atob === 'function' ? atob(b64) : '';
+    var totalLen = binaryStr.length;
+    var encryptedBytes = new Uint8Array(totalLen);
+    for (var i = 0; i < totalLen; i++) {
         encryptedBytes[i] = binaryStr.charCodeAt(i);
     }
 
-    // Initialize cipher state
-    let fnvHash = 0x811c9dc5;
-    for (let k = 0; k < seed.length; k++) {
+    var fnvHash = 0x811c9dc5;
+    for (var k = 0; k < seed.length; k++) {
         fnvHash = Math.imul(fnvHash ^ seed.charCodeAt(k), 0x1000193) >>> 0;
     }
 
-    let n = mixMurmur(mixMurmur(fnvHash) ^ mixMurmur((Number(tmdbId) >>> 0) ^ 0x9e3779b9)) >>> 0;
-    const stateVector = new Array(61);
+    var n = mixMurmur(mixMurmur(fnvHash) ^ mixMurmur((Number(tmdbId) >>> 0) ^ 0x9e3779b9)) >>> 0;
+    var stateVector = new Array(61);
 
-    for (let e = 0; e < 8; e++) {
-        const a = n % 61;
+    for (var e = 0; e < 8; e++) {
+        var a = n % 61;
         n = rotateLeft((n + 0x9e3779b9) >>> 0, 7 + (7 & e));
         stateVector[a] = (n ^ mixMurmur(n)) >>> 0;
         n = mixMurmur((n + a) >>> 0);
     }
 
-    const state = {
+    var state = {
         S: stateVector,
         acc: mixMurmur(0xa5a5a5a5 ^ n) >>> 0
     };
 
-    // Generate keystream and XOR
-    const keystream = new Uint8Array(totalLen);
-    let step = 0;
-    for (let e = 0; e < totalLen; ) {
-        const word = (function(st, d) {
-            let t, s;
-            const sArr = st.S;
-            let acc = st.acc;
-            const lIdx = acc % 61;
-            const inN = 0 - Number(lIdx in sArr);
-            const rVal = sArr[lIdx] >>> 0;
-            const cVal = Math.imul(0x9e3779b9, d + 1) >>> 0;
-            let bVal = (((t = acc) ^ (s = (rVal ^ cVal) >>> 0)) >>> 0 | (t & s & inN) >>> 0) >>> 0;
+    var keystream = new Uint8Array(totalLen);
+    var step = 0;
+    for (var pos = 0; pos < totalLen;) {
+        var word = (function(st, d) {
+            var t, s;
+            var sArr = st.S;
+            var acc = st.acc;
+            var lIdx = acc % 61;
+            var inN = 0 - Number(lIdx in sArr);
+            var rVal = sArr[lIdx] >>> 0;
+            var cVal = Math.imul(0x9e3779b9, d + 1) >>> 0;
+            var bVal = (((t = acc) ^ (s = (rVal ^ cVal) >>> 0)) >>> 0 | (t & s & inN) >>> 0) >>> 0;
             acc = mixMurmur(((bVal = (rotateLeft((bVal + acc) >>> 0, 31 & lIdx) ^ rotateLeft(acc, 31 & Math.imul(lIdx, 7))) >>> 0) + 0x9e3779b9) >>> 0);
             sArr[lIdx] = acc >>> 0;
             st.acc = acc;
             return acc >>> 0;
         })(state, step++);
 
-        keystream[e++] = word & 255;
-        if (e < totalLen) keystream[e++] = (word >>> 8) & 255;
-        if (e < totalLen) keystream[e++] = (word >>> 16) & 255;
-        if (e < totalLen) keystream[e++] = (word >>> 24) & 255;
+        keystream[pos++] = word & 255;
+        if (pos < totalLen) keystream[pos++] = (word >>> 8) & 255;
+        if (pos < totalLen) keystream[pos++] = (word >>> 16) & 255;
+        if (pos < totalLen) keystream[pos++] = (word >>> 24) & 255;
     }
 
-    for (let e = 0; e < totalLen; e++) {
-        encryptedBytes[e] ^= keystream[e];
+    for (var idx = 0; idx < totalLen; idx++) {
+        encryptedBytes[idx] ^= keystream[idx];
     }
 
-    // Verify magic header
-    for (let e = 0; e < MAGIC_HEADER.length; e++) {
-        if (encryptedBytes[e] !== MAGIC_HEADER[e]) {
+    for (var m = 0; m < MAGIC_HEADER.length; m++) {
+        if (encryptedBytes[m] !== MAGIC_HEADER[m]) {
             throw new Error('decrypt failed: bad seed or tampered payload');
         }
     }
 
-    const payload = encryptedBytes.subarray(MAGIC_HEADER.length);
+    var payload = encryptedBytes.subarray(MAGIC_HEADER.length);
     if (typeof TextDecoder !== 'undefined') {
         return new TextDecoder('utf-8').decode(payload);
     }
-    let str = '';
-    for (let i = 0; i < payload.length; i++) {
-        str += String.fromCharCode(payload[i]);
+    var str = '';
+    for (var j = 0; j < payload.length; j++) {
+        str += String.fromCharCode(payload[j]);
     }
     return decodeURIComponent(escape(str));
 }
 
-// Global seed cache and in-flight request tracker
-const seedCache = new Map();
-const inFlightSeedRequests = new Map();
+var seedCache = new Map();
+var inFlightSeedRequests = new Map();
 
-async function fetchSeed(tmdbId, forceRefresh = false) {
-    const now = Date.now();
-    const cached = seedCache.get(tmdbId);
+async function fetchSeed(tmdbId, forceRefresh) {
+    var now = Date.now();
+    var cached = seedCache.get(tmdbId);
     if (!forceRefresh && cached && cached.expiresAt - 5000 > now) {
         return cached.seed;
     }
@@ -165,19 +152,19 @@ async function fetchSeed(tmdbId, forceRefresh = false) {
         return inFlightSeedRequests.get(tmdbId);
     }
 
-    const promise = (async () => {
+    var promise = (async function() {
         try {
-            const clientIp = '104.28.19.' + (Math.abs(Number(tmdbId) || 1) % 250 + 1);
-            const headers = Object.assign({}, DEFAULT_HEADERS, {
+            var clientIp = '104.28.19.' + (Math.abs(Number(tmdbId) || 1) % 250 + 1);
+            var headers = Object.assign({}, DEFAULT_HEADERS, {
                 'X-Forwarded-For': clientIp
             });
-            const res = await fetchWithTimeout(STREAM_API_URL + '/seed?mediaId=' + encodeURIComponent(tmdbId), {
+            var res = await fetchWithTimeout(STREAM_API_URL + '/seed?mediaId=' + encodeURIComponent(tmdbId), {
                 headers: headers
-            }, 6000);
+            }, 2800);
             if (!res.ok) {
                 throw new Error('Failed to obtain seed: HTTP ' + res.status);
             }
-            const data = await res.json();
+            var data = await res.json();
             if (!data || !data.seed) {
                 throw new Error('Empty seed returned from endpoint');
             }
@@ -196,8 +183,7 @@ async function fetchSeed(tmdbId, forceRefresh = false) {
     return promise;
 }
 
-// Dynamic language lookup dictionary
-const LANGUAGE_MAP = {
+var LANGUAGE_MAP = {
     'en': { name: 'English', tag: 'ENG' },
     'ja': { name: 'Japanese', tag: 'JPN' },
     'ko': { name: 'Korean', tag: 'KOR' },
@@ -214,10 +200,9 @@ const LANGUAGE_MAP = {
 
 function getLanguageInfo(code) {
     if (!code) return { name: 'English', tag: 'ENG' };
-    const lower = String(code).toLowerCase().trim();
+    var lower = String(code).toLowerCase().trim();
     if (LANGUAGE_MAP[lower]) return LANGUAGE_MAP[lower];
-    // Check by name match
-    for (const k in LANGUAGE_MAP) {
+    for (var k in LANGUAGE_MAP) {
         if (LANGUAGE_MAP[k].name.toLowerCase() === lower) {
             return LANGUAGE_MAP[k];
         }
@@ -225,36 +210,91 @@ function getLanguageInfo(code) {
     return { name: lower.charAt(0).toUpperCase() + lower.slice(1), tag: lower.slice(0, 3).toUpperCase() };
 }
 
-// Metadata resolution helper
+function normalizeQualityLabel(rawQuality) {
+    var q = String(rawQuality || '').trim();
+    if (!q) return 'Auto';
+    if (/2160|4k|uhd/i.test(q)) return '4K 2160p';
+    if (/1440|2k/i.test(q)) return '1440p';
+    if (/1080/i.test(q)) return '1080p';
+    if (/720/i.test(q)) return '720p';
+    if (/480|576/i.test(q)) return '480p';
+    if (/360/i.test(q)) return '360p';
+    if (/^\d{3,4}$/.test(q)) return q + 'p';
+    return q;
+}
+
+function extractMediaTags(text) {
+    var upper = String(text || '').toUpperCase();
+    var sourceType = null;
+    if (/\bREMUX\b/.test(upper)) sourceType = 'REMUX';
+    else if (/\bBLU-?RAY\b|\bBDRIP\b/.test(upper)) sourceType = 'BluRay';
+    else if (/\bWEB-?DL\b/.test(upper)) sourceType = 'WEB-DL';
+    else if (/\bWEBRIP\b/.test(upper)) sourceType = 'WEBRip';
+    else if (/\bHDRIP\b/.test(upper)) sourceType = 'HDRip';
+
+    var hdrType = null;
+    if (/DOLBY\s*VISION|\bDOVI\b|\bDV\b/.test(upper)) hdrType = 'DV';
+    else if (/HDR10\+|HDR10PLUS/.test(upper)) hdrType = 'HDR10+';
+    else if (/HDR10/.test(upper)) hdrType = 'HDR10';
+    else if (/\bHLG\b/.test(upper)) hdrType = 'HLG';
+    else if (/\bHDR\b/.test(upper)) hdrType = 'HDR';
+
+    var codec = null;
+    if (/\bAV1\b/.test(upper)) codec = 'AV1';
+    else if (/\b(?:HEVC|H\.?265|X265)\b/.test(upper)) codec = 'HEVC';
+    else if (/\b(?:AVC|H\.?264|X264)\b/.test(upper)) codec = 'AVC';
+    else if (/\bVP9\b/.test(upper)) codec = 'VP9';
+
+    var bitDepth = /\b10[- ]?BIT\b/.test(upper) ? '10bit' : null;
+
+    var audioFormat = null;
+    var hasAtmos = /\bATMOS\b/.test(upper);
+    var has71 = /\b7\.1\b/.test(upper);
+    var has51 = /\b5\.1\b/.test(upper);
+    if (hasAtmos) audioFormat = has71 ? 'Dolby Atmos 7.1' : (has51 ? 'Dolby Atmos 5.1' : 'Dolby Atmos');
+    else if (/\bTRUE-?HD\b/.test(upper)) audioFormat = has71 ? 'TrueHD 7.1' : 'TrueHD';
+    else if (/\b(?:DDP|DD\+|EAC3|E-AC-3)\b/.test(upper)) audioFormat = has51 ? 'DDP 5.1' : 'DDP';
+    else if (/\bDTS-?HD\b/.test(upper)) audioFormat = 'DTS-HD';
+    else if (/\bDTS\b/.test(upper)) audioFormat = has51 ? 'DTS 5.1' : 'DTS';
+
+    var tags = [];
+    if (sourceType) tags.push(sourceType);
+    if (hdrType) tags.push(hdrType);
+    if (codec) tags.push(codec);
+    if (bitDepth) tags.push(bitDepth);
+    if (audioFormat) tags.push(audioFormat);
+    return { sourceType: sourceType, hdrType: hdrType, codec: codec, bitDepth: bitDepth, audioFormat: audioFormat, tags: tags };
+}
+
 async function resolveMetadata(tmdbId, mediaType, extraArgs) {
     extraArgs = extraArgs || {};
-    let title = extraArgs.title || extraArgs.name || '';
-    let year = extraArgs.year || (extraArgs.releaseDate ? extraArgs.releaseDate.substring(0, 4) : '');
-    let imdbId = extraArgs.imdbId || '';
-    let totalSeasons = extraArgs.totalSeasons || '';
-    let origLang = extraArgs.originalLanguage || extraArgs.original_language || '';
+    var title = extraArgs.title || extraArgs.name || '';
+    var year = extraArgs.year || (extraArgs.releaseDate ? String(extraArgs.releaseDate).substring(0, 4) : '');
+    var imdbId = extraArgs.imdbId || '';
+    var totalSeasons = extraArgs.totalSeasons || '';
+    var origLang = extraArgs.originalLanguage || extraArgs.original_language || '';
 
     if (!title || !year || !origLang || (!imdbId && mediaType !== 'movie')) {
         try {
-            const tmdbType = mediaType === 'movie' ? 'movie' : 'tv';
-            const metaRes = await fetchWithTimeout(TMDB_PROXY_URL + '/' + tmdbType + '/' + tmdbId, {
+            var tmdbType = mediaType === 'movie' ? 'movie' : 'tv';
+            var metaRes = await fetchWithTimeout(TMDB_PROXY_URL + '/' + tmdbType + '/' + tmdbId, {
                 headers: DEFAULT_HEADERS
-            }, 3500);
+            }, 2500);
             if (metaRes.ok) {
-                const meta = await metaRes.json();
+                var meta = await metaRes.json();
                 title = title || meta.title || meta.name || '';
-                const relDate = meta.release_date || meta.first_air_date || '';
+                var relDate = meta.release_date || meta.first_air_date || '';
                 year = year || (relDate ? relDate.substring(0, 4) : '');
                 imdbId = imdbId || meta.imdb_id || (meta.external_ids ? meta.external_ids.imdb_id : '') || '';
                 totalSeasons = totalSeasons || meta.number_of_seasons || '';
                 origLang = origLang || meta.original_language || '';
             }
             if (!imdbId && tmdbType === 'tv') {
-                const extRes = await fetchWithTimeout(TMDB_PROXY_URL + '/tv/' + tmdbId + '/external_ids', {
+                var extRes = await fetchWithTimeout(TMDB_PROXY_URL + '/tv/' + tmdbId + '/external_ids', {
                     headers: DEFAULT_HEADERS
-                }, 2500);
+                }, 2000);
                 if (extRes.ok) {
-                    const extMeta = await extRes.json();
+                    var extMeta = await extRes.json();
                     if (extMeta && extMeta.imdb_id) imdbId = extMeta.imdb_id;
                 }
             }
@@ -272,8 +312,8 @@ async function resolveMetadata(tmdbId, mediaType, extraArgs) {
     };
 }
 
-// Active responsive server endpoints discovered from Movy Next.js bundles
-const SERVERS = [
+// Active Movy CDN servers (permanently dead 404/500 nodes removed)
+var SERVERS = [
     { name: 'Miami', endpoint: 'miami', dubbedLanguage: null },
     { name: 'Boise', endpoint: 'boise', dubbedLanguage: null },
     { name: 'Atlanta', endpoint: 'atlanta', dubbedLanguage: null },
@@ -282,11 +322,9 @@ const SERVERS = [
     { name: 'Reno', endpoint: 'reno', dubbedLanguage: null },
     { name: 'Oakland', endpoint: 'oakland', dubbedLanguage: null },
     { name: 'Seattle', endpoint: 'seattle', dubbedLanguage: null },
-    { name: 'Dallas', endpoint: 'dallas', dubbedLanguage: null },
     { name: 'Portland', endpoint: 'portland', dubbedLanguage: null },
     { name: 'Austin', endpoint: 'austin', dubbedLanguage: null },
     { name: 'Munich', endpoint: 'munich', dubbedLanguage: 'de', extraParams: { language: 'german' } },
-    { name: 'Berlin', endpoint: 'berlin', dubbedLanguage: 'de' },
     { name: 'Paris', endpoint: 'paris', dubbedLanguage: 'fr' },
     { name: 'Delhi', endpoint: 'delhi', dubbedLanguage: 'hi' },
     { name: 'Cancun', endpoint: 'cancun', dubbedLanguage: 'es' }
@@ -294,84 +332,75 @@ const SERVERS = [
 
 async function queryServer(server, params, tmdbId, seed, timeoutMs) {
     try {
-        const sp = new URLSearchParams();
-        for (const k in params) {
-            if (params.hasOwnProperty(k)) {
-                const val = params[k];
+        var sp = new URLSearchParams();
+        for (var k in params) {
+            if (Object.prototype.hasOwnProperty.call(params, k)) {
+                var val = params[k];
                 if (val !== undefined && val !== null && val !== '') {
                     sp.set(k, String(val));
                 }
             }
         }
         if (server.extraParams) {
-            for (const k in server.extraParams) {
-                if (server.extraParams.hasOwnProperty(k)) {
-                    sp.set(k, String(server.extraParams[k]));
+            for (var ek in server.extraParams) {
+                if (Object.prototype.hasOwnProperty.call(server.extraParams, ek)) {
+                    sp.set(ek, String(server.extraParams[ek]));
                 }
             }
         }
         sp.set('enc', '2');
         sp.set('seed', seed);
 
-        const url = STREAM_API_URL + '/' + server.endpoint + '/sources?' + sp.toString();
-        const fetchOptions = { headers: Object.assign({}, DEFAULT_HEADERS) };
+        var url = STREAM_API_URL + '/' + server.endpoint + '/sources?' + sp.toString();
+        var fetchOptions = { headers: Object.assign({}, DEFAULT_HEADERS) };
 
-        let res = await fetchWithTimeout(url, fetchOptions, timeoutMs || 3000);
+        var res = await fetchWithTimeout(url, fetchOptions, timeoutMs || 2500);
 
-        // 401 triggers seed refresh and single retry
         if (res.status === 401) {
-            console.log('[Movy] 401 on server ' + server.name + ', refreshing seed...');
-            const freshSeed = await fetchSeed(tmdbId, true);
+            var freshSeed = await fetchSeed(tmdbId, true);
             sp.set('seed', freshSeed);
-            const retryUrl = STREAM_API_URL + '/' + server.endpoint + '/sources?' + sp.toString();
-            res = await fetchWithTimeout(retryUrl, fetchOptions, timeoutMs || 3000);
+            var retryUrl = STREAM_API_URL + '/' + server.endpoint + '/sources?' + sp.toString();
+            res = await fetchWithTimeout(retryUrl, fetchOptions, 2200);
             seed = freshSeed;
         }
 
         if (!res.ok) {
-            const errBody = await res.text();
-            console.log('[Movy] Server ' + server.name + ' returned HTTP ' + res.status + ': ' + errBody.slice(0, 80));
             return { streams: [], subtitles: [] };
         }
 
-        const rawText = await res.text();
+        var rawText = await res.text();
         if (!rawText) return { streams: [], subtitles: [] };
 
-        let decryptedJson;
+        var parsed;
         try {
-            decryptedJson = decryptPayload(rawText, seed, tmdbId);
-        } catch (decErr) {
-            console.error('[Movy] Decrypt failed for ' + server.name + ': ' + decErr.message);
-            return { streams: [], subtitles: [] };
-        }
-
-        let parsed;
-        try {
+            var decryptedJson = decryptPayload(rawText, seed, tmdbId);
             parsed = JSON.parse(decryptedJson);
-        } catch (pErr) {
-            console.error('[Movy] JSON parse failed for ' + server.name + ': ' + pErr.message);
+        } catch (err) {
             return { streams: [], subtitles: [] };
         }
 
-        const rawSources = parsed.sources || [];
-        const rawSubs = parsed.subtitles || [];
+        var rawSources = parsed.sources || [];
+        var rawSubs = parsed.subtitles || [];
 
-        const mappedSubs = rawSubs.map(s => ({
-            url: s.url,
-            language: s.language || s.lang || 'English',
-            name: s.language || s.lang || 'English',
-            headers: Object.assign({}, DEFAULT_HEADERS)
-        })).filter(s => s.url && typeof s.url === 'string');
+        var mappedSubs = rawSubs.map(function(s) {
+            var langName = (s && (s.language || s.lang)) || 'English';
+            return {
+                url: s && s.url,
+                language: langName,
+                lang: langName,
+                name: langName,
+                headers: Object.assign({}, DEFAULT_HEADERS)
+            };
+        }).filter(function(s) { return s.url && typeof s.url === 'string'; });
 
-        // Dynamically detect multi-audio or audio language from real-time payload
-        let isMulti = false;
-        let detectedLang = null;
+        var isMulti = false;
+        var detectedLang = null;
 
         if (parsed.audios && Array.isArray(parsed.audios) && parsed.audios.length > 1) {
             isMulti = true;
         } else if (parsed.audio && Array.isArray(parsed.audio) && parsed.audio.length > 1) {
             isMulti = true;
-        } else if (typeof parsed.audio === 'string' && parsed.audio.toLowerCase().includes('multi')) {
+        } else if (typeof parsed.audio === 'string' && parsed.audio.toLowerCase().indexOf('multi') >= 0) {
             isMulti = true;
         } else if (parsed.audio && typeof parsed.audio === 'string') {
             detectedLang = parsed.audio;
@@ -379,138 +408,130 @@ async function queryServer(server, params, tmdbId, seed, timeoutMs) {
             detectedLang = parsed.language;
         }
 
-        let baseAudio;
-        let baseTag;
-        let baseCode;
-
+        var baseAudio, baseTag, baseCode;
         if (isMulti) {
             baseAudio = 'Multi';
             baseTag = 'MULTI';
             baseCode = 'multi';
         } else if (detectedLang) {
-            const info = getLanguageInfo(detectedLang);
+            var info = getLanguageInfo(detectedLang);
             baseAudio = info.name;
             baseTag = info.tag;
             baseCode = detectedLang.toLowerCase();
         } else if (server.dubbedLanguage) {
-            const info = getLanguageInfo(server.dubbedLanguage);
-            baseAudio = info.name;
-            baseTag = info.tag;
+            var dInfo = getLanguageInfo(server.dubbedLanguage);
+            baseAudio = dInfo.name;
+            baseTag = dInfo.tag;
             baseCode = server.dubbedLanguage;
         } else {
-            // Dynamically assign media's real-time original language
-            const origInfo = getLanguageInfo(params.originalLanguage);
+            var origInfo = getLanguageInfo(params.originalLanguage);
             baseAudio = origInfo.name;
             baseTag = origInfo.tag;
             baseCode = params.originalLanguage || 'en';
         }
 
-        const streams = [];
-        for (let i = 0; i < rawSources.length; i++) {
-            const src = rawSources[i];
+        var streams = [];
+        for (var i = 0; i < rawSources.length; i++) {
+            var src = rawSources[i];
             if (!src || !src.url || typeof src.url !== 'string') continue;
-            const srcUrl = src.url.trim();
+            var srcUrl = src.url.trim();
             if (!srcUrl.startsWith('http')) continue;
 
-            let itemAudio = baseAudio;
-            let itemTag = baseTag;
-            let itemCode = baseCode;
+            var itemAudio = baseAudio;
+            var itemTag = baseTag;
+            var itemCode = baseCode;
 
-            // Check if individual source specifies an audio or multi cue
             if (src.audio && typeof src.audio === 'string') {
-                if (src.audio.toLowerCase().includes('multi')) {
+                if (src.audio.toLowerCase().indexOf('multi') >= 0) {
                     itemAudio = 'Multi';
                     itemTag = 'MULTI';
                     itemCode = 'multi';
                 } else {
-                    const info = getLanguageInfo(src.audio);
-                    itemAudio = info.name;
-                    itemTag = info.tag;
+                    var sInfo = getLanguageInfo(src.audio);
+                    itemAudio = sInfo.name;
+                    itemTag = sInfo.tag;
                     itemCode = src.audio.toLowerCase();
                 }
-            } else if (srcUrl.toLowerCase().includes('multi') || srcUrl.toLowerCase().includes('dual')) {
+            } else if (srcUrl.toLowerCase().indexOf('multi') >= 0 || srcUrl.toLowerCase().indexOf('dual') >= 0) {
                 itemAudio = 'Multi';
                 itemTag = 'MULTI';
                 itemCode = 'multi';
             }
 
-            const qualityLabel = src.quality ? String(src.quality) : 'Auto';
-            const isHls = srcUrl.toLowerCase().indexOf('.m3u8') >= 0 || srcUrl.toLowerCase().indexOf('hls') >= 0;
+            var qualityLabel = normalizeQualityLabel(src.quality);
+            var isHls = srcUrl.toLowerCase().indexOf('.m3u8') >= 0 || srcUrl.toLowerCase().indexOf('hls') >= 0;
+            var isAdaptive = isHls && (qualityLabel === 'Auto' || srcUrl.toLowerCase().indexOf('master') >= 0 || rawSources.length === 1);
+            var streamTypeLabel = isAdaptive ? 'Adaptive HLS' : (isHls ? 'HLS' : 'Direct MP4');
+            var subServerLabel = isAdaptive ? 'Adaptive HLS' : (isHls ? 'HLS' : 'Direct MP4');
 
-            const isMovie = params.mediaType === 'movie';
-            const epTag = !isMovie ? ('S' + String(params.season || 1).padStart(2, '0') + 'E' + String(params.episode || 1).padStart(2, '0')) : '';
-            const titlePrefix = !isMovie ?
-                ((params.title || 'Video') + ' ' + epTag) :
-                ((params.title || 'Video') + (params.year ? ' (' + params.year + ')' : ''));
+            var tech = extractMediaTags([src.quality, src.title, src.label, srcUrl].filter(Boolean).join(' '));
+            var techSuffix = tech.tags.length > 0 ? (' [' + tech.tags.join(' · ') + ']') : '';
 
-            const displayTag = itemAudio === 'Multi' ? '[MULTI]' : ('[' + itemTag + ']');
+            var isMovie = params.mediaType === 'movie';
+            var epTag = !isMovie ? ('S' + String(params.season || 1).padStart(2, '0') + 'E' + String(params.episode || 1).padStart(2, '0')) : '';
+            var titlePrefix = !isMovie
+                ? ((params.title || 'Video') + ' ' + epTag)
+                : ((params.title || 'Video') + (params.year ? ' (' + params.year + ')' : ''));
+
+            var displayTag = itemAudio === 'Multi' ? '[MULTI]' : ('[' + itemTag + ']');
+            var descParts = [streamTypeLabel, qualityLabel, itemAudio].concat(tech.tags);
 
             streams.push({
-                name: 'Movy | ' + server.name + ' • ' + itemAudio + ' ' + displayTag + ' (' + qualityLabel + ')',
-                title: titlePrefix + ' ' + displayTag + ' - ' + server.name + ' [' + qualityLabel + ']',
+                name: 'Movy | ' + server.name + ' › ' + subServerLabel + ' • ' + itemAudio + ' ' + displayTag + ' (' + qualityLabel + ')' + techSuffix,
+                title: titlePrefix + ' ' + displayTag + ' - Movy ' + server.name + ' [' + qualityLabel + ']' + techSuffix,
+                rawTitle: titlePrefix + ' ' + qualityLabel + ' ' + displayTag,
+                description: descParts.join(' • '),
                 url: srcUrl,
                 quality: qualityLabel,
+                isAdaptive: isAdaptive,
+                streamType: streamTypeLabel,
                 size: isMovie ? '2.0 GB' : '750 MB',
                 type: isHls ? 'm3u8' : 'mp4',
                 format: isHls ? 'hls' : 'mp4',
+                container: isHls ? 'hls' : 'mp4',
                 provider: 'movy',
+                server: server.name,
+                subServer: subServerLabel,
                 language: itemCode,
+                audio: {
+                    isMulti: itemAudio === 'Multi',
+                    primary: itemAudio,
+                    tag: itemTag,
+                    badge: displayTag
+                },
+                hdrType: tech.hdrType,
+                codec: tech.codec,
+                audioFormat: tech.audioFormat,
+                sourceType: tech.sourceType,
+                tags: tech.tags,
                 headers: Object.assign({}, DEFAULT_HEADERS),
                 subtitles: mappedSubs
             });
         }
 
-        console.log('[Movy] Server ' + server.name + ' (' + baseAudio + ') returned ' + streams.length + ' stream(s), ' + mappedSubs.length + ' sub(s)');
-        return { streams, subtitles: mappedSubs };
+        return { streams: streams, subtitles: mappedSubs };
     } catch (err) {
-        console.log('[Movy] Server ' + server.name + ' finished: ' + err.message);
         return { streams: [], subtitles: [] };
     }
 }
 
-/**
- * Main entry point for Nuvio Plugin Runtime.
- *
- * @param {string} tmdbId - TMDB ID (numeric)
- * @param {string} mediaType - 'movie', 'tv', or 'anime'
- * @param {number} [season] - Season number for episodic content
- * @param {number} [episode] - Episode number for episodic content
- * @param {Object} [extraArgs] - Extra arguments from app or test harness
- * @returns {Promise<Array<Object>>}
- */
 async function getStreams(tmdbId, mediaType, season, episode, extraArgs) {
     var callArgs = (typeof globalThis !== 'undefined' && globalThis.__CALL_ARGS__) || {};
     extraArgs = Object.assign({}, callArgs, extraArgs || {});
 
-    console.log('[Movy] Fetching streams for ' + mediaType + ' ID: ' + tmdbId + ' (S:' + season + ' E:' + episode + ')');
-
-    if (!tmdbId) {
-        console.error('[Movy] No tmdbId provided');
-        return [];
-    }
+    if (!tmdbId) return [];
 
     try {
-        const isMovie = mediaType === 'movie';
-        // Concurrently resolve metadata and fetch seed
-        const metaPromise = resolveMetadata(tmdbId, mediaType, extraArgs);
-        const seedPromise = fetchSeed(tmdbId);
+        var isMovie = mediaType === 'movie';
+        var results = await Promise.all([
+            resolveMetadata(tmdbId, mediaType, extraArgs),
+            fetchSeed(tmdbId, false)
+        ]);
+        var meta = results[0];
+        var seed = results[1];
+        if (!seed) return [];
 
-        let meta, seed;
-        try {
-            [meta, seed] = await Promise.all([metaPromise, seedPromise]);
-        } catch (initErr) {
-            console.error('[Movy] Initialization error: ' + initErr.message);
-            return [];
-        }
-
-        if (!seed) {
-            console.error('[Movy] Failed to acquire seed token');
-            return [];
-        }
-
-        console.log('[Movy] Resolved metadata: "' + meta.title + '" (' + meta.year + '), Original Language: ' + meta.originalLanguage + ', IMDB: ' + meta.imdbId);
-
-        const params = {
+        var params = {
             title: meta.title,
             mediaType: isMovie ? 'movie' : 'tv',
             year: meta.year,
@@ -527,39 +548,43 @@ async function getStreams(tmdbId, mediaType, season, episode, extraArgs) {
             params.episode = episode != null ? Number(episode) : 1;
         }
 
-        // Query all active servers in parallel with 3.8s individual timeout
-        const serverPromises = SERVERS.map((srv) => queryServer(srv, params, tmdbId, seed, 3800));
-        const serverResults = await Promise.all(serverPromises);
+        var serverResults = await Promise.all(
+            SERVERS.map(function(srv) { return queryServer(srv, params, tmdbId, seed, 2500); })
+        );
 
-        const allStreams = [];
-        const masterSubsMap = new Map();
+        var allStreams = [];
+        var seenUrls = {};
+        var masterSubsMap = new Map();
 
-        for (let i = 0; i < serverResults.length; i++) {
-            const res = serverResults[i];
+        for (var i = 0; i < serverResults.length; i++) {
+            var res = serverResults[i];
             if (!res) continue;
-            const streamsList = res.streams || (Array.isArray(res) ? res : []);
-            const subsList = res.subtitles || [];
+            var streamsList = res.streams || [];
+            var subsList = res.subtitles || [];
 
-            for (let j = 0; j < streamsList.length; j++) {
-                allStreams.push(streamsList[j]);
+            for (var j = 0; j < streamsList.length; j++) {
+                var st = streamsList[j];
+                var key = st.url + '|' + st.quality;
+                if (seenUrls[key]) continue;
+                seenUrls[key] = true;
+                allStreams.push(st);
             }
-            for (let k = 0; k < subsList.length; k++) {
-                const sub = subsList[k];
-                if (sub && sub.url && !masterSubsMap.has(sub.language)) {
-                    masterSubsMap.set(sub.language, sub);
+            for (var k = 0; k < subsList.length; k++) {
+                var sub = subsList[k];
+                if (sub && sub.url && !masterSubsMap.has(sub.language + '|' + sub.url)) {
+                    masterSubsMap.set(sub.language + '|' + sub.url, sub);
                 }
             }
         }
 
-        const aggregatedSubtitles = Array.from(masterSubsMap.values());
+        var aggregatedSubtitles = Array.from(masterSubsMap.values());
         if (aggregatedSubtitles.length > 0) {
-            console.log('[Movy] Cross-server subtitles aggregated: ' + aggregatedSubtitles.length + ' tracks attached to all streams');
-            for (let i = 0; i < allStreams.length; i++) {
-                allStreams[i].subtitles = aggregatedSubtitles;
+            for (var sIdx = 0; sIdx < allStreams.length; sIdx++) {
+                allStreams[sIdx].subtitles = aggregatedSubtitles;
             }
         }
 
-        console.log('[Movy] Total streams discovered: ' + allStreams.length);
+        console.log('[Movy] Total streams discovered: ' + allStreams.length + ', subtitles: ' + aggregatedSubtitles.length);
         return allStreams;
     } catch (globalErr) {
         console.error('[Movy] Unexpected plugin error: ' + globalErr.message);
@@ -568,7 +593,8 @@ async function getStreams(tmdbId, mediaType, season, episode, extraArgs) {
 }
 
 if (typeof module !== 'undefined' && module.exports) {
-    module.exports = { getStreams };
-} else {
+    module.exports = { getStreams: getStreams };
+}
+if (typeof globalThis !== 'undefined') {
     globalThis.getStreams = getStreams;
 }
